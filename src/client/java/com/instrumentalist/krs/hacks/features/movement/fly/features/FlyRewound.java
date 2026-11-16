@@ -159,6 +159,7 @@ public class FlyRewound implements FlyEvent {
     private void selfDamage() {
         if (mc.player == null) return;
 
+        FlyModule.noteSelfDamage();
         int iterations = (int) Math.ceil(SELF_DAMAGE_HEIGHT / SELF_DAMAGE_OFFSET);
         Vec3 pos = mc.player.position();
         boolean collision = mc.player.horizontalCollision;

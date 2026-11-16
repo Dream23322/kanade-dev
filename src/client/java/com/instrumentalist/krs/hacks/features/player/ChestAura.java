@@ -8,6 +8,7 @@ import com.instrumentalist.krs.hacks.Module;
 import com.instrumentalist.krs.hacks.ModuleCategory;
 import com.instrumentalist.krs.hacks.ModuleManager;
 import com.instrumentalist.krs.hacks.features.combat.KillAura;
+import com.instrumentalist.krs.hacks.features.movement.fly.FlyModule;
 import com.instrumentalist.krs.utils.entity.PlayerUtil;
 import com.instrumentalist.krs.utils.input.Keys;
 import com.instrumentalist.krs.utils.rotation.RotationManager;
@@ -18,6 +19,9 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.damagesource.DamageTypes;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.inventory.ShulkerBoxMenu;
@@ -73,6 +77,7 @@ public class ChestAura extends Module {
     private long lastRotationRequest;
     private int openWait;
     private long lastCombatMillis;
+    private int lastHurtTime;
 
     @Override
     public String description() {
@@ -308,13 +313,43 @@ public class ChestAura extends Module {
 
     private boolean inCombat(LocalPlayer player) {
         long now = System.currentTimeMillis();
-        if (player.hurtTime > 0)
-            lastCombatMillis = now;
+        // Evaluate each hurt event once, on its first tick, so an ignored trick hit does not
+        // pause for the rest of the hurt animation.
+        if (player.hurtTime > lastHurtTime) {
+            lastHurtTime = player.hurtTime;
+            if (!isIgnorableDamage(player))
+                lastCombatMillis = now;
+        } else {
+            lastHurtTime = player.hurtTime;
+        }
 
         if (ModuleManager.getModuleState(KillAura.class) && KillAura.closestEntity != null)
             return true;
 
         return now - lastCombatMillis < COMBAT_WINDOW_MILLIS;
+    }
+
+    private static boolean isIgnorableDamage(LocalPlayer player) {
+        DamageSource source = player.getLastDamageSource();
+        if (source != null) {
+            Entity attacker = source.getEntity();
+            // A named attacker is a real hit; leave the one-shot trick flag for its own event.
+            if (attacker != null && attacker != player)
+                return false;
+        }
+
+        // Only the fly modules' deliberate self-damage tricks are ignored, and only for the
+        // first hurt event after the trick registered.
+        if (FlyModule.consumeSelfDamage())
+            return true;
+
+        if (source == null)
+            return false;
+
+        return source.getEntity() == player
+                || source.getDirectEntity() == player
+                || source.is(DamageTypes.FALL)
+                || source.is(DamageTypes.FLY_INTO_WALL);
     }
 
     private void halt() {
@@ -338,5 +373,6 @@ public class ChestAura extends Module {
         cooldowns.clear();
         looted.clear();
         lastCombatMillis = 0L;
+        lastHurtTime = 0;
     }
 }

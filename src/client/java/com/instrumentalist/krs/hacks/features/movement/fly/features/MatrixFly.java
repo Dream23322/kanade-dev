@@ -136,6 +136,7 @@ public class MatrixFly implements FlyEvent {
                 }
 
                 if (FlyModule.matrixHighSelfDamage.get() && highSelfDamageJumps < 4 && player.onGround()) {
+                    FlyModule.noteSelfDamage();
                     player.input.makeJump();
                     highSelfDamageJumps++;
                 }
@@ -147,6 +148,7 @@ public class MatrixFly implements FlyEvent {
                 }
 
                 if (FlyModule.matrixDamageSelfDamage.get() && player.hurtTime <= 0 && damageSelfDamageJumps < 4 && player.onGround()) {
+                    FlyModule.noteSelfDamage();
                     player.input.makeJump();
                     damageSelfDamageJumps++;
                 }

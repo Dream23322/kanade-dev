@@ -58,6 +58,7 @@ public class NCPBoostFly implements FlyEvent {
                         PacketUtil.sendPacket(new ServerboundMovePlayerPacket.Pos(mc.player.position().x, mc.player.position().y, mc.player.position().z, false, false));
                     }
                     PacketUtil.sendPacket(new ServerboundMovePlayerPacket.Pos(mc.player.position().x, mc.player.position().y, mc.player.position().z, true, false));
+                    FlyModule.noteSelfDamage();
                 }
 
                 TimerUtil.timerSpeed = 0.3f;
