@@ -5,6 +5,7 @@ import com.instrumentalist.krs.Client;
 import com.instrumentalist.krs.utils.GuiInputBlocker;
 import com.instrumentalist.krs.utils.audio.Mp3MusicPlayer;
 import com.instrumentalist.krs.hacks.features.render.Interface;
+import com.instrumentalist.krs.utils.nanovg.MaterialIcon;
 import com.instrumentalist.krs.utils.nanovg.NanoVGManager;
 import com.instrumentalist.krs.utils.nanovg.NVGFonts;
 import com.instrumentalist.krs.utils.network.FileUtil;
@@ -36,31 +37,28 @@ import net.minecraft.network.chat.Component;
 
 public class CustomTitleScreen extends Screen implements IMinecraft {
 
+    private static final float LAYOUT = 1.35f;
     private static long cachedTimeSecond = -1L;
     private static String cachedTime = "";
     private static final Mp3MusicPlayer MAIN_MENU_MUSIC = new Mp3MusicPlayer("assets/krs/musics/mainmenu.mp3");
-    private static final float MUSIC_SLIDER_WIDTH = 180f;
-    private static final float MUSIC_SLIDER_TRACK_HEIGHT = 7f;
-    private static final Color BUTTON_IDLE = new Color(12, 9, 18, 162);
-    private static final Color BUTTON_HOVERED = new Color(22, 14, 33, 205);
-    private static final Color HOVER_LINE = new Color(214, 107, 232, 220);
     private static final float STARTUP_LOAD_BAR_FADE_SECONDS = 0.25f;
     private static float startupLoadBarAlpha;
     private static long startupLoadBarFadeNanos;
     private static final String RELEASES_URL = "https://github.com/Aspw-w/Krs/releases";
+    private static final Color TOP_BAR_BUTTON_HOVER = new Color(28, 24, 38, 205);
 
     private boolean musicVolumeSliderDragging;
     private boolean musicVolumeDirty;
     private float musicSliderGrab;
     private long lastMusicSliderNanos;
 
-    private final MenuButton singlePlayerButton = new MenuButton("Single Player");
-    private final MenuButton multiPlayerButton = new MenuButton("Multi Player");
-    private final MenuButton realmsButton = new MenuButton("Realms");
-    private final MenuButton friendsButton = new MenuButton("Friends");
-    private final MenuButton optionsButton = new MenuButton("Options");
-    private final MenuButton updateAvailableButton = new MenuButton("Update");
-    private final MenuButton exitButton = new MenuButton("Exit");
+    private final MenuButton singlePlayerButton = new MenuButton("Single Player", MaterialIcon.HOME);
+    private final MenuButton multiPlayerButton = new MenuButton("Multi Player", MaterialIcon.PUBLIC);
+    private final MenuButton realmsButton = new MenuButton("Realms", MaterialIcon.LAN);
+    private final MenuButton friendsButton = new MenuButton("Friends", MaterialIcon.PERSON);
+    private final MenuButton optionsButton = new MenuButton("Options", MaterialIcon.SETTING);
+    private final MenuButton updateAvailableButton = new MenuButton("Update", MaterialIcon.RELOAD, true);
+    private final MenuButton exitButton = new MenuButton("Exit", MaterialIcon.CLOSE);
     private final List<MenuButton> menuButtons = List.of(
             singlePlayerButton,
             multiPlayerButton,
@@ -78,6 +76,11 @@ public class CustomTitleScreen extends Screen implements IMinecraft {
             updateAvailableButton,
             exitButton
     );
+
+    private float menuX;
+    private float menuY;
+    private float menuWidth;
+    private float menuHeight;
 
     public static float bgOffsetX = 0;
     public static float bgOffsetY = 0;
@@ -181,47 +184,251 @@ public class CustomTitleScreen extends Screen implements IMinecraft {
         return scaledMouseX >= x && scaledMouseX - width <= x && scaledMouseY >= y && scaledMouseY - height <= y;
     }
 
-    private MenuButton updateUiButtonState(MenuButton button, float x, float y, float mouseX, float mouseY) {
-        boolean hovered = isHovered(mouseX, mouseY, x - 110f, y - 34f, 220f, 42f);
-        float target = hovered ? 24f : 21f;
-        button.fontSize = button.fontSize * 0.85f + target * 0.15f;
-        button.animation = hovered ? button.animation * 0.8f + 10f : button.animation * 0.8f;
-        button.x = x;
-        button.y = y;
-        button.hovered = hovered;
-        return button;
+    private static float layoutScale() {
+        return NanoVGClickGuiScreen.getLayoutScale();
     }
 
-    private void renderUiButton(NVGU vg, MenuButton state) {
-        Color baseColor = state.hovered ? BUTTON_HOVERED : BUTTON_IDLE;
-        vg.roundedRectangle(state.x - 110f, state.y - 34f, 220f, 38f, NanoVGTheme.RADIUS_LABEL, baseColor);
-        NanoVGTheme.renderEdge(vg, state.x - 110f, state.y - 34f, 220f, 38f, NanoVGTheme.RADIUS_LABEL, 1f);
-
-        if (state.hovered)
-            vg.rectangle(state.x - 109f, state.y - 30f, 2f, 30f, NanoVGTheme.ACCENT);
-
-        NVGFont font = state.hovered ? NVGFonts.INTER_MEDIUM : NVGFonts.INTER;
-        font.drawText(state.label, state.x, state.y - 15f, 13f,
-                state.hovered ? NanoVGTheme.text(246) : NanoVGTheme.muted(235), Alignment.CENTER_MIDDLE, true);
+    private float u(float value) {
+        return value * LAYOUT * layoutScale();
     }
 
-    private void renderMusicVolumeSlider(NVGU vg, float centerX, float mouseX, float mouseY) {
-        float sliderX = getMusicSliderX(centerX);
-        float sliderY = getMusicSliderY();
-        float volume = getMainMenuMusicVolume();
-        float fill = Math.clamp(volume, 0f, 1f);
-        float radius = 0f;
+    private float font(float size) {
+        return Math.max(1f, Math.round(size * LAYOUT * layoutScale()));
+    }
+
+    private float topBarY() {
+        return u(8f);
+    }
+
+    private float iconButtonSize() {
+        return u(18f);
+    }
+
+    private float closeButtonX(float screenWidth) {
+        return screenWidth - u(14f) - iconButtonSize();
+    }
+
+    private float settingsButtonX(float screenWidth) {
+        return closeButtonX(screenWidth) - iconButtonSize() - u(2f);
+    }
+
+    private float musicPanelWidth() {
+        return u(190f);
+    }
+
+    private float musicPanelHeight() {
+        return u(18f);
+    }
+
+    private float musicPanelX(float screenWidth) {
+        return (screenWidth - musicPanelWidth()) / 2f;
+    }
+
+    private float musicPanelY() {
+        return topBarY();
+    }
+
+    private float musicTrackX(float screenWidth) {
+        return musicPanelX(screenWidth) + u(42f);
+    }
+
+    private float musicTrackWidth() {
+        return musicPanelWidth() - u(42f) - u(34f);
+    }
+
+    private float musicTrackY() {
+        return musicPanelY() + musicPanelHeight() / 2f - u(2.5f);
+    }
+
+    private float musicTrackHeight() {
+        return u(5f);
+    }
+
+    private float menuRowHeight() {
+        return u(24f);
+    }
+
+    private float menuRowGap() {
+        return u(2f);
+    }
+
+    private float menuHeaderHeight() {
+        return u(22f);
+    }
+
+    private float menuPadding() {
+        return u(6f);
+    }
+
+    private void layoutMenu(List<MenuButton> buttons, float screenWidth, float screenHeight) {
+        menuWidth = Math.max(u(160f), Math.min(u(232f), screenWidth - u(32f)));
+
+        float rowHeight = menuRowHeight();
+        float rowGap = menuRowGap();
+        float headerHeight = menuHeaderHeight();
+        float padding = menuPadding();
+        int count = buttons.size();
+
+        menuHeight = headerHeight + u(4f) + count * rowHeight + Math.max(0, count - 1) * rowGap + padding;
+        menuX = (screenWidth - menuWidth) / 2f;
+
+        float centeredY = (screenHeight - menuHeight) / 2f + u(4f);
+        float topLimit = u(40f);
+        float bottomLimit = screenHeight - menuHeight - u(24f);
+        menuY = topLimit <= bottomLimit ? Math.clamp(centeredY, topLimit, bottomLimit) : centeredY;
+
+        float rowX = menuX + padding;
+        float rowWidth = menuWidth - padding * 2f;
+        float rowY = menuY + headerHeight + u(4f);
+        for (MenuButton button : buttons) {
+            button.x = rowX;
+            button.y = rowY;
+            button.width = rowWidth;
+            button.height = rowHeight;
+            rowY += rowHeight + rowGap;
+        }
+    }
+
+    private void updateMenuButton(MenuButton button, double mouseX, double mouseY) {
+        button.hovered = isHovered(mouseX, mouseY, button.x, button.y, button.width, button.height);
+        float target = button.hovered ? 1f : 0f;
+        button.hover += (target - button.hover) * 0.22f;
+    }
+
+    private void renderTopBar(NVGU vg, float screenWidth, double mouseX, double mouseY) {
+        float barY = topBarY();
+        float wordSize = u(15f);
+        float wordWidth = NanoVGTheme.drawTrackedText(NVGFonts.INTER_MEDIUM, "kanade", u(14f), barY,
+                wordSize, u(1.1f), NanoVGTheme.text(245), true);
+
+        String version = "v" + Client.clientVersion;
+        float versionX = u(14f) + wordWidth + u(7f);
+        float versionWidth = NVGFonts.INTER.getWidth(version, font(8f));
+        NVGFonts.INTER.drawText(version, versionX, barY + u(6f), font(8f),
+                NanoVGTheme.dim(205), Alignment.LEFT_TOP, true);
+
+        if (screenWidth >= u(640f)) {
+            float chipX = versionX + versionWidth + u(10f);
+            NVGFonts.ICON.drawText(MaterialIcon.PERSON, chipX, barY + u(4.5f), font(9f),
+                    NanoVGTheme.dim(185), Alignment.LEFT_TOP, true);
+            NVGFonts.INTER.drawText(mc.getUser().getName(), chipX + u(11f), barY + u(6f), font(8f),
+                    NanoVGTheme.dim(210), Alignment.LEFT_TOP, true);
+        }
+
+        float settingsX = settingsButtonX(screenWidth);
+        boolean settingsHovered = isHovered(mouseX, mouseY, settingsX, barY, iconButtonSize(), iconButtonSize());
+        renderTopBarButton(vg, settingsX, barY, MaterialIcon.SETTING, false, settingsHovered);
+
+        float closeX = closeButtonX(screenWidth);
+        boolean closeHovered = isHovered(mouseX, mouseY, closeX, barY, iconButtonSize(), iconButtonSize());
+        renderTopBarButton(vg, closeX, barY, MaterialIcon.CLOSE, true, closeHovered);
+
+        String time = getCurrentTime();
+        float clockWidth = NVGFonts.INTER.getWidth(time, font(11f));
+        NVGFonts.INTER.drawText(time, settingsX - u(10f) - clockWidth, barY + u(2f), font(11f),
+                NanoVGTheme.muted(210), Alignment.LEFT_TOP, true);
+    }
+
+    private void renderTopBarButton(NVGU vg, float x, float y, String icon, boolean danger, boolean hovered) {
+        float size = iconButtonSize();
+        Color background;
+        if (hovered)
+            background = danger ? NanoVGTheme.scaledAlpha(NanoVGTheme.DANGER, 0.45f) : TOP_BAR_BUTTON_HOVER;
+        else
+            background = NanoVGTheme.scaledAlpha(NanoVGTheme.HUD_BACKGROUND, 0.55f);
+
+        vg.rectangle(x, y, size, size, background);
+        Color iconColor = danger && hovered ? NanoVGTheme.danger(245)
+                : hovered ? NanoVGTheme.text(235) : NanoVGTheme.dim(200);
+        NVGFonts.ICON.drawText(icon, x + size / 2f, y + size / 2f - u(1f), font(10f),
+                iconColor, Alignment.CENTER_MIDDLE, true);
+    }
+
+    private void renderMusicControl(NVGU vg, float screenWidth, double mouseX, double mouseY) {
+        float panelX = musicPanelX(screenWidth);
+        float panelY = musicPanelY();
+        boolean hovered = musicVolumeSliderDragging || isMusicSliderHovered(mouseX, mouseY);
+
+        NanoVGTheme.renderCompact(vg, panelX, panelY, musicPanelWidth(), musicPanelHeight(),
+                NanoVGTheme.RADIUS_LABEL, 1f);
+
+        NVGFonts.INTER.drawText("MUSIC", panelX + u(7f), panelY + u(5.5f), font(8f),
+                hovered ? NanoVGTheme.text(235) : NanoVGTheme.dim(200), Alignment.LEFT_TOP, true);
+
+        float volume = Math.clamp(getMainMenuMusicVolume(), 0f, 1f);
         float grab = updateMusicSliderGrab();
-        float knobWidth = 9f * (1f + 0.46f * grab);
-        float knobHeight = 13f * (1f - 0.30f * grab);
-        float knobX = sliderX + MUSIC_SLIDER_WIDTH * fill - knobWidth / 2f;
-        float knobY = sliderY + MUSIC_SLIDER_TRACK_HEIGHT / 2f - knobHeight / 2f;
-        String sliderText = volume == 0f ? "music off" : "volume " + Math.round(volume * 100f) + "%";
-        NVGFonts.INTER.drawText(sliderText, centerX, sliderY - 10f, 9f, NanoVGTheme.muted(215), Alignment.CENTER_MIDDLE, true);
-        vg.rectangle(sliderX, sliderY, MUSIC_SLIDER_WIDTH, MUSIC_SLIDER_TRACK_HEIGHT, NanoVGTheme.CONTROL_TRACK);
-        if (fill > 0.001f)
-            vg.rectangle(sliderX, sliderY, MUSIC_SLIDER_WIDTH * fill, MUSIC_SLIDER_TRACK_HEIGHT, NanoVGTheme.sliderFill(235));
+        float trackX = musicTrackX(screenWidth);
+        float trackY = musicTrackY();
+        float trackWidth = musicTrackWidth();
+        float trackHeight = musicTrackHeight();
+
+        vg.rectangle(trackX, trackY, trackWidth, trackHeight, NanoVGTheme.CONTROL_TRACK);
+        if (volume > 0.001f)
+            vg.rectangle(trackX, trackY, trackWidth * volume, trackHeight, NanoVGTheme.sliderFill(235));
+
+        float knobWidth = u(4f) * (1f + 0.5f * grab);
+        float knobHeight = trackHeight + u(4f) * (1f - 0.35f * grab);
+        float knobX = trackX + trackWidth * volume - knobWidth / 2f;
+        float knobY = trackY + trackHeight / 2f - knobHeight / 2f;
         vg.rectangle(knobX, knobY, knobWidth, knobHeight, NanoVGTheme.KNOB_FILL);
+
+        String percent = volume <= 0.001f ? "OFF" : Math.round(volume * 100f) + "%";
+        float percentWidth = NVGFonts.INTER.getWidth(percent, font(8f));
+        float percentX = panelX + musicPanelWidth() - u(7f) - percentWidth;
+        NVGFonts.INTER.drawText(percent, percentX, panelY + u(5.5f), font(8f),
+                hovered ? NanoVGTheme.text(230) : NanoVGTheme.muted(215), Alignment.LEFT_TOP, true);
+    }
+
+    private void renderMenuPanel(NVGU vg, List<MenuButton> buttons) {
+        NanoVGTheme.renderPanel(vg, menuX, menuY, menuWidth, menuHeight, NanoVGTheme.RADIUS_MENU, 1f);
+
+        float headerHeight = menuHeaderHeight();
+        NanoVGTheme.drawTrackedText(NVGFonts.INTER, "MAIN MENU", menuX + u(7f), menuY + u(7f),
+                font(8f), u(1.1f), NanoVGTheme.dim(190), true);
+
+        String version = "v" + Client.clientVersion;
+        float versionWidth = NVGFonts.INTER.getWidth(version, font(8f));
+        NVGFonts.INTER.drawText(version, menuX + menuWidth - u(7f) - versionWidth, menuY + u(7f),
+                font(8f), NanoVGTheme.dim(190), Alignment.LEFT_TOP, true);
+
+        vg.rectangle(menuX, menuY + headerHeight, menuWidth, 1f, NanoVGTheme.PANEL_EDGE);
+
+        for (MenuButton button : buttons)
+            renderMenuRow(vg, button);
+    }
+
+    private void renderMenuRow(NVGU vg, MenuButton state) {
+        float hover = state.hover;
+
+        if (state.alert)
+            vg.rectangle(state.x, state.y, state.width, state.height,
+                    NanoVGTheme.scaledAlpha(NanoVGTheme.ACCENT, 0.22f));
+        else if (hover > 0.01f)
+            vg.rectangle(state.x, state.y, state.width, state.height,
+                    new Color(28, 24, 38, Math.clamp(Math.round(205f * hover), 0, 255)));
+
+        float accentWidth = u(1.5f) * (state.alert ? 1f : hover);
+        if (accentWidth > 0.05f)
+            vg.rectangle(state.x, state.y + u(3f), accentWidth, state.height - u(6f),
+                    NanoVGTheme.accent(255));
+
+        float centerY = state.y + state.height / 2f;
+
+        Color iconColor = state.alert ? NanoVGTheme.ACCENT
+                : NanoVGTheme.blend(NanoVGTheme.muted(215), NanoVGTheme.text(246), hover);
+        NVGFonts.ICON.drawText(state.icon, state.x + u(8f), centerY - font(10f) / 2f, font(10f),
+                iconColor, Alignment.LEFT_TOP, true);
+
+        NVGFont labelFont = hover > 0.5f ? NVGFonts.INTER_MEDIUM : NVGFonts.INTER;
+        Color labelColor = state.alert ? NanoVGTheme.accent(240)
+                : NanoVGTheme.blend(NanoVGTheme.muted(225), NanoVGTheme.text(246), hover);
+        labelFont.drawText(state.label, state.x + u(26f), centerY - u(5.5f), u(11f) * (1f + 0.05f * hover),
+                labelColor, Alignment.LEFT_TOP, true);
+
+        float chevronX = state.x + state.width - u(12f) + u(2f) * hover;
+        Color chevronColor = NanoVGTheme.blend(NanoVGTheme.dim(170), NanoVGTheme.accent(235), hover);
+        NVGFonts.ICON.drawText(MaterialIcon.FORWARD_IOS, chevronX, centerY - u(1f), font(9f),
+                chevronColor, Alignment.CENTER_MIDDLE, true);
     }
 
     private float updateMusicSliderGrab() {
@@ -241,8 +448,13 @@ public class CustomTitleScreen extends Screen implements IMinecraft {
         if (musicVolumeSliderDragging || isMusicSliderHovered(mouseX, mouseY))
             return CursorTypes.POINTING_HAND;
 
+        float screenWidth = NanoVGManager.getScaledScreenWidth();
+        if (isHovered(mouseX, mouseY, settingsButtonX(screenWidth), topBarY(), iconButtonSize(), iconButtonSize())
+                || isHovered(mouseX, mouseY, closeButtonX(screenWidth), topBarY(), iconButtonSize(), iconButtonSize()))
+            return CursorTypes.POINTING_HAND;
+
         for (MenuButton button : getVisibleMenuButtons()) {
-            if (isHovered(mouseX, mouseY, button.x - 110f, button.y - 34f, 220f, 42f))
+            if (isHovered(mouseX, mouseY, button.x, button.y, button.width, button.height))
                 return CursorTypes.POINTING_HAND;
         }
 
@@ -250,17 +462,14 @@ public class CustomTitleScreen extends Screen implements IMinecraft {
     }
 
     private boolean isMusicSliderHovered(double mouseX, double mouseY) {
-        float centerX = NanoVGManager.getScaledScreenWidth() / 2f;
-        float sliderX = getMusicSliderX(centerX);
-        float sliderY = getMusicSliderY();
-
-        return isHovered(mouseX, mouseY, sliderX - 8f, sliderY - 22f, MUSIC_SLIDER_WIDTH + 16f, 40f);
+        float screenWidth = NanoVGManager.getScaledScreenWidth();
+        return isHovered(mouseX, mouseY, musicPanelX(screenWidth), musicPanelY(), musicPanelWidth(), musicPanelHeight());
     }
 
     private void updateMainMenuMusicVolumeFromMouse(double mouseX, boolean save) {
-        float sliderX = getMusicSliderX(NanoVGManager.getScaledScreenWidth() / 2f);
+        float screenWidth = NanoVGManager.getScaledScreenWidth();
         float scaledMouseX = NanoVGManager.toScaledMouseX(mouseX);
-        float volume = (scaledMouseX - sliderX) / MUSIC_SLIDER_WIDTH;
+        float volume = (scaledMouseX - musicTrackX(screenWidth)) / Math.max(1f, musicTrackWidth());
         volume = Math.max(0f, Math.min(1f, volume));
 
         MAIN_MENU_MUSIC.setVolume(volume);
@@ -286,24 +495,25 @@ public class CustomTitleScreen extends Screen implements IMinecraft {
         return FileUtil.INSTANCE.isLatestClient() ? menuButtons : outdatedClientMenuButtons;
     }
 
-    private static float getMusicSliderX(float centerX) {
-        return centerX - MUSIC_SLIDER_WIDTH / 2f;
-    }
-
-    private static float getMusicSliderY() {
-        return 62f;
-    }
-
     private static class MenuButton {
         final String label;
+        final String icon;
+        final boolean alert;
         float x;
         float y;
+        float width;
+        float height;
         boolean hovered;
-        float animation;
-        float fontSize = 21f;
+        float hover;
 
-        MenuButton(String label) {
+        MenuButton(String label, String icon) {
+            this(label, icon, false);
+        }
+
+        MenuButton(String label, String icon, boolean alert) {
             this.label = label;
+            this.icon = icon;
+            this.alert = alert;
         }
     }
 
@@ -406,7 +616,7 @@ public class CustomTitleScreen extends Screen implements IMinecraft {
         float markerX = trackX - markerWidth + (trackWidth + markerWidth * 2f) * phase;
 
         vg.scissor(trackX, trackY, trackWidth, trackHeight, () ->
-                vg.rectangle(markerX, trackY, markerWidth, trackHeight, HOVER_LINE)
+                vg.rectangle(markerX, trackY, markerWidth, trackHeight, NanoVGTheme.accent(220))
         );
     }
 
@@ -419,13 +629,14 @@ public class CustomTitleScreen extends Screen implements IMinecraft {
         if (Client.nanoVgManager == null)
             return;
 
+        // Keep hit boxes valid for the cursor before the (possibly deferred) renderer runs.
+        layoutMenu(getVisibleMenuButtons(), NanoVGManager.getScaledScreenWidth(), NanoVGManager.getScaledScreenHeight());
         context.requestCursor(resolveMenuCursor(mouseX, mouseY));
 
         Consumer<NVGU> renderer = vg -> {
             float screenWidth = NanoVGManager.getScaledScreenWidth();
             float screenHeight = NanoVGManager.getScaledScreenHeight();
             float centerX = screenWidth / 2f;
-            float centerY = screenHeight / 2f;
 
             if (!isMinecraftMouseBlocked()) {
                 float targetBgOffsetX = NanoVGManager.toScaledMouseX(mc.mouseHandler.getScaledXPos(mc.getWindow()));
@@ -457,44 +668,20 @@ public class CustomTitleScreen extends Screen implements IMinecraft {
                     )
             );
 
-            float menuWidth = Math.min(300f, Math.max(240f, screenWidth - 40f));
-            float menuX = centerX - menuWidth / 2f;
-            float menuY = centerY - 150f;
-            float firstButtonY = menuY + 46f;
             List<MenuButton> visibleMenuButtons = getVisibleMenuButtons();
-            float menuHeight = 18f + (45f * visibleMenuButtons.size());
+            layoutMenu(visibleMenuButtons, screenWidth, screenHeight);
+            for (MenuButton button : visibleMenuButtons)
+                updateMenuButton(button, mouseX, mouseY);
 
-            NanoVGTheme.renderPanel(vg, menuX, menuY, menuWidth, menuHeight, NanoVGTheme.RADIUS_LABEL, 1f);
+            renderTopBar(vg, screenWidth, mouseX, mouseY);
+            renderMusicControl(vg, screenWidth, mouseX, mouseY);
+            renderMenuPanel(vg, visibleMenuButtons);
 
-            float wordSize = 30f;
-            float wordTracking = 1.8f;
-            String wordmark = "kanade";
-            float wordWidth = NanoVGTheme.trackedTextWidth(NVGFonts.INTER_MEDIUM, wordmark, wordSize, wordTracking);
-            float wordY = menuY - 52f;
-            NanoVGTheme.drawTrackedText(NVGFonts.INTER_MEDIUM, wordmark, centerX - wordWidth / 2f, wordY,
-                    wordSize, wordTracking, NanoVGTheme.text(246), true);
-            NVGFonts.INTER.drawText("v" + Client.clientVersion, centerX, wordY + wordSize + 5f, 9f,
-                    NanoVGTheme.dim(215), Alignment.CENTER_TOP, true);
-            NanoVGTheme.renderAccentUnderline(vg, centerX - wordWidth * 0.28f, wordY + wordSize + 1f,
-                    wordWidth * 0.56f, 1f, 0.9f);
-
-            NanoVGTheme.drawTrackedText(NVGFonts.INTER, "KANADE  " + Client.clientVersion, 10f, screenHeight - 15f,
-                    8f, 1.3f, NanoVGTheme.muted(190), true);
-            NVGFonts.INTER.drawText(getCurrentTime(), screenWidth - 12f, 10f, 11f,
-                    NanoVGTheme.muted(210), Alignment.RIGHT_TOP, true);
-            NVGFonts.INTER.drawText("Logged in as " + mc.getUser().getName(), centerX, 20f, 10f,
-                    NanoVGTheme.dim(210), Alignment.CENTER_TOP, true);
-            renderMusicVolumeSlider(vg, centerX, mouseX, mouseY);
+            NanoVGTheme.drawTrackedText(NVGFonts.INTER, "KANADE  " + Client.clientVersion, u(10f), screenHeight - u(15f),
+                    font(8f), u(1.3f), NanoVGTheme.muted(190), true);
 
             if (GraphicsApiCompatibility.usesCompatibilityRenderer()) {
-                NVGFonts.INTER.drawText("Vulkan support is not yet complete, so performance will be significantly lower than when using OpenGL. Please use OpenGL unless there is a specific reason not to.", centerX, 80f, 21f, NanoVGTheme.ACCENT, Alignment.CENTER_TOP, true);
-            }
-
-            for (int i = 0; i < visibleMenuButtons.size(); i++)
-                updateUiButtonState(visibleMenuButtons.get(i), centerX, firstButtonY + (45f * i), mouseX, mouseY);
-
-            for (MenuButton state : visibleMenuButtons) {
-                renderUiButton(vg, state);
+                NVGFonts.INTER.drawText("Vulkan support is not yet complete, so performance will be significantly lower than when using OpenGL. Please use OpenGL unless there is a specific reason not to.", centerX, u(40f), font(9f), NanoVGTheme.ACCENT, Alignment.CENTER_TOP, true);
             }
 
             Client.notificationManager.renderNotifications(vg);
@@ -514,8 +701,10 @@ public class CustomTitleScreen extends Screen implements IMinecraft {
         double mouseX = event.x();
         double mouseY = event.y();
         int button = event.button();
-        float centerX = NanoVGManager.getScaledScreenWidth() / 2f;
-        float firstButtonY = NanoVGManager.getScaledScreenHeight() / 2f - 104f;
+        float screenWidth = NanoVGManager.getScaledScreenWidth();
+        float screenHeight = NanoVGManager.getScaledScreenHeight();
+        List<MenuButton> visibleMenuButtons = getVisibleMenuButtons();
+        layoutMenu(visibleMenuButtons, screenWidth, screenHeight);
 
         if (button == Keys.MOUSE_BUTTON_LEFT) {
             if (isMusicSliderHovered(mouseX, mouseY)) {
@@ -524,47 +713,54 @@ public class CustomTitleScreen extends Screen implements IMinecraft {
                 return true;
             }
 
-            List<MenuButton> visibleMenuButtons = getVisibleMenuButtons();
-            for (int i = 0; i < visibleMenuButtons.size(); i++) {
-                MenuButton menuButton = visibleMenuButtons.get(i);
-                String label = menuButton.label;
-                float buttonTop = firstButtonY + (45f * i) - 34f;
+            if (isHovered(mouseX, mouseY, settingsButtonX(screenWidth), topBarY(), iconButtonSize(), iconButtonSize())) {
+                mc.gui.setScreen(new OptionsScreen(this, mc.options));
+                return true;
+            }
 
-                if (isHovered(mouseX, mouseY, centerX - 110f, buttonTop, 220f, 38f)) {
-                    switch (label) {
-                        case "Single Player":
-                            mc.gui.setScreen(new SelectWorldScreen(this));
-                            return true;
+            if (isHovered(mouseX, mouseY, closeButtonX(screenWidth), topBarY(), iconButtonSize(), iconButtonSize())) {
+                stopMainMenuMusic();
+                mc.stop();
+                return true;
+            }
 
-                        case "Multi Player":
-                            mc.gui.setScreen(new JoinMultiplayerScreen(this));
-                            return true;
+            for (MenuButton menuButton : visibleMenuButtons) {
+                if (!isHovered(mouseX, mouseY, menuButton.x, menuButton.y, menuButton.width, menuButton.height))
+                    continue;
 
-                        case "Realms":
-                            mc.gui.setScreen(new RealmsMainScreen(this));
-                            return true;
+                switch (menuButton.label) {
+                    case "Single Player":
+                        mc.gui.setScreen(new SelectWorldScreen(this));
+                        return true;
 
-                        case "Friends":
-                            OnlineOptionsScreen.confirmFriendsListEnabled(
-                                    mc,
-                                    () -> mc.gui.setScreen(new FriendsOverlayScreen(this)),
-                                    this
-                            );
-                            return true;
+                    case "Multi Player":
+                        mc.gui.setScreen(new JoinMultiplayerScreen(this));
+                        return true;
 
-                        case "Options":
-                            mc.gui.setScreen(new OptionsScreen(this, mc.options));
-                            return true;
+                    case "Realms":
+                        mc.gui.setScreen(new RealmsMainScreen(this));
+                        return true;
 
-                        case "Update":
-                            FileUtil.INSTANCE.openInBrowser(RELEASES_URL);
-                            return true;
+                    case "Friends":
+                        OnlineOptionsScreen.confirmFriendsListEnabled(
+                                mc,
+                                () -> mc.gui.setScreen(new FriendsOverlayScreen(this)),
+                                this
+                        );
+                        return true;
 
-                        case "Exit":
-                            stopMainMenuMusic();
-                            mc.stop();
-                            return true;
-                    }
+                    case "Options":
+                        mc.gui.setScreen(new OptionsScreen(this, mc.options));
+                        return true;
+
+                    case "Update":
+                        FileUtil.INSTANCE.openInBrowser(RELEASES_URL);
+                        return true;
+
+                    case "Exit":
+                        stopMainMenuMusic();
+                        mc.stop();
+                        return true;
                 }
             }
         }
