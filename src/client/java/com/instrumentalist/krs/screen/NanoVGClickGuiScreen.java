@@ -1030,10 +1030,10 @@ public class NanoVGClickGuiScreen extends Screen {
         updateScaledMouse();
         boolean staticFallbackBackdrop = !isInGame() && !hasBackgroundScreen();
 
+        // The ClickGUI blurs the category backdrops, so refresh the captured source every frame.
+        Shader2DRenderer.INSTANCE.beginFrame();
         if (staticFallbackBackdrop)
             renderTitleBackdrop(vg, screenWidth, screenHeight);
-        else if (hasBackgroundScreen())
-            Shader2DRenderer.INSTANCE.beginFrame();
 
         vg.globalAlpha(easeOut(openProgress), () -> {
             // Atmosphere keeps a compact search field visible above the centred columns.
@@ -1056,6 +1056,11 @@ public class NanoVGClickGuiScreen extends Screen {
             applyHoverCursor();
         });
     }
+    /** Layout scale shared with the other NanoVG client screens (title screen, HUD). */
+    public static float getLayoutScale() {
+        return Math.clamp(rememberedLayoutScale, MIN_LAYOUT_SCALE, MAX_LAYOUT_SCALE);
+    }
+
     private float u(float value) {
         return value * LAYOUT * layoutScale;
     }
@@ -1466,15 +1471,15 @@ public class NanoVGClickGuiScreen extends Screen {
             column.viewport = new Rect(column.body.x, column.body.y, column.body.width, column.body.height);
         }
 
-        // Reuse the client's existing dark glass effect behind the panels. The effect
-        // implementation is provided by NanoVGTheme; this class does not define a blur shader.
+        // Blur the world behind the category columns before the translucent panel fills
+        // are drawn on top, so the text stays readable while the backdrop stays soft.
         vg.beginEffectBatch();
         for (ModuleCategory category : categories) {
             ColumnState column = columns.get(category);
             if (column != null && column.header.width > 0f) {
                 float panelHeight = column.header.height + column.body.height;
-                drawControlGlass(vg, column.header.x, column.header.y, column.header.width,
-                        panelHeight, 0f, 0.25f, true, 0f);
+                vg.blurRoundedRectangle(column.header.x, column.header.y, column.header.width,
+                        panelHeight, 0f, 10f, 0.92f);
             }
         }
         vg.flushEffectBatch();
@@ -1492,7 +1497,7 @@ public class NanoVGClickGuiScreen extends Screen {
             String label = category.label();
             float labelSize = columnFont(COLUMN_ROW_FONT);
             vg.rectangle(column.header.x, column.header.y, column.header.width, column.header.height,
-                    new Color(10, 11, 16, 235));
+                    new Color(10, 11, 16, 205));
             NVGFonts.INTER.drawText(label, column.header.centerX(), column.header.centerY(), labelSize,
                     modules.isEmpty() ? NanoVGTheme.dim(150) : NanoVGTheme.text(235),
                     Alignment.CENTER_MIDDLE, true);
@@ -1512,7 +1517,7 @@ public class NanoVGClickGuiScreen extends Screen {
                 continue;
             }
             vg.rectangle(column.body.x, column.body.y, column.body.width, column.body.height,
-                    new Color(15, 16, 21, 211));
+                    new Color(15, 16, 21, 176));
 
             float contentHeight = contentHeights.get(category);
             column.max = Math.max(0f, contentHeight - column.viewport.height);
@@ -2056,13 +2061,24 @@ public class NanoVGClickGuiScreen extends Screen {
     private void renderTagTabs(NVGU vg, float screenWidth) {
         tagTabBounds.clear();
 
-        float height = u(15f);
-        float gap = u(4f);
-        float width = u(54f);
+        float height = u(12f);
+        float gap = u(3f);
+        float width = u(44f);
         float totalWidth = width * 2f + gap;
         float startX = (screenWidth - totalWidth) / 2f;
         float firstRowY = topBarHeight + u(4f);
         float secondRowY = firstRowY + height + gap;
+
+        float panelPaddingX = u(10f);
+        float panelPaddingTop = u(4f);
+        float panelPaddingBottom = u(6f);
+        float panelHeight = secondRowY + height + panelPaddingBottom - (firstRowY - panelPaddingTop);
+        vg.rectangle(startX - panelPaddingX, firstRowY - panelPaddingTop,
+                totalWidth + panelPaddingX * 2f, panelHeight,
+                new Color(7, 8, 12, 218));
+        vg.rectangleBorder(startX - panelPaddingX, firstRowY - panelPaddingTop,
+                totalWidth + panelPaddingX * 2f, panelHeight, cu(0.7f),
+                alpha(255, 255, 255, 20), Border.INSIDE);
 
         drawTagTab(vg, new Rect(startX, firstRowY, width, height), "Classic",
                 pvpTab == ModuleTags.Pvp.CLASSIC, pvpPins.contains(ModuleTags.Pvp.CLASSIC),
@@ -2079,7 +2095,7 @@ public class NanoVGClickGuiScreen extends Screen {
                 visibilityPins.contains(ModuleTags.Visibility.GHOST),
                 null, ModuleTags.Visibility.GHOST);
 
-        tagTabsBottom = secondRowY + height;
+        tagTabsBottom = secondRowY + height + panelPaddingBottom;
     }
 
     private void drawTagTab(NVGU vg, Rect rect, String label, boolean selected, boolean pinned,
@@ -2092,7 +2108,7 @@ public class NanoVGClickGuiScreen extends Screen {
                         : alpha(255, 255, 255, 10));
         if (pinned)
             vg.rectangleBorder(rect.x, rect.y, rect.width, rect.height, cu(0.7f), NanoVGTheme.ACCENT, Border.INSIDE);
-        NVGFonts.INTER.drawText(label, rect.centerX(), rect.y + (rect.height - font(8f)) / 2f, font(8f),
+        NVGFonts.INTER.drawText(label, rect.centerX(), rect.y + (rect.height - font(7f)) / 2f, font(7f),
                 selected ? NanoVGTheme.ACCENT
                         : pinned ? NanoVGTheme.text(230)
                         : hovered ? NanoVGTheme.text(235)
