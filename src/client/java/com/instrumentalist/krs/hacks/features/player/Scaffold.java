@@ -87,6 +87,13 @@ public class Scaffold extends Module {
     private static final double MATH_SEARCH_PLAYER_DISTANCE_WEIGHT_TICKS = 0.35D;
     private static final boolean[] SEARCH_PASSES = {true, false};
     private static final int MATH_FACE_SAMPLE_DIVISIONS = 16;
+    private static final double AIM_RANDOM_RADIUS = 0.34D;
+    private static final double AIM_EDGE_REACH = 0.5D - MATH_SAFE_HIT_INSET;
+    private static final float AIM_DIAGONAL_STEP = 45.0F;
+    private static final double AIM_DIAGONAL_WEIGHT = 0.6D;
+    private static final double AIM_MOVEMENT_WEIGHT = 0.5D;
+    private static final int AIM_NEAREST_SAMPLE_DIVISIONS = 4;
+    private static final int AIM_DIAGONAL_SAMPLE_DIVISIONS = 8;
 
     @Setting
     private static final ListValue mode = new ListValue("Mode", new String[]{"Normal", "Telly"}, "Normal")
@@ -121,8 +128,8 @@ public class Scaffold extends Module {
             .describe("Whether telly also moves you upwards.");
 
     @Setting
-    public static final ListValue rotationMode = new ListValue("Rotation Mode", new String[]{"Math", "Simple", "Backwards", "None"}, "Math")
-            .describe("How the placement rotations are calculated.");
+    public static final ListValue rotationMode = new ListValue("Rotation Mode", new String[]{"Math", "Simple", "Backwards", "Center", "Nearest", "Random", "Edge", "Diagonal", "None"}, "Math")
+            .describe("How the placement rotations are calculated. Center aims at the face center, Nearest takes the smallest turn, Random jitters across the face, Edge aims at the leading edge, Diagonal snaps the yaw toward 45 degree steps.");
 
     @Setting
     private static final FloatValue maxRotationSpeed = new FloatValue("Max Rotation Speed", 60f, 0f, 180f, Scaffold::usesRotationSpeed)
@@ -141,11 +148,11 @@ public class Scaffold extends Module {
             .describe("How early the rotation starts before placing.");
 
     @Setting
-    private static final BooleanValue snapRotation = new BooleanValue("Snap Rotation", false, () -> rotationMode.get().equalsIgnoreCase("math") || rotationMode.get().equalsIgnoreCase("simple"))
+    private static final BooleanValue snapRotation = new BooleanValue("Snap Rotation", false, Scaffold::usesSnappingRotation)
             .describe("Snaps the rotation instantly instead of easing into it.");
 
     @Setting
-    private static final BooleanValue noPlaceWhenSnapping = new BooleanValue("No Place when Snapping", false, () -> (rotationMode.get().equalsIgnoreCase("math") || rotationMode.get().equalsIgnoreCase("simple")) && snapRotation.get())
+    private static final BooleanValue noPlaceWhenSnapping = new BooleanValue("No Place when Snapping", false, () -> usesSnappingRotation() && snapRotation.get())
             .describe("Skips placing while the rotation snaps.");
 
     @Setting
@@ -237,6 +244,9 @@ public class Scaffold extends Module {
     private float humanizedMathYawSpeed = Float.NaN;
     private float humanizedMathPitchSpeed = Float.NaN;
     private float humanizedMathSpeedBias = 0.0F;
+    private PlacementTarget aimTarget = null;
+    private Vec3 aimPos = null;
+    private int aimRefreshTick = Integer.MIN_VALUE;
     private final RotationSpeedJitterState rotationSpeedJitter = new RotationSpeedJitterState();
     private final RotationSpeedJitterState mathPitchSpeedJitter = new RotationSpeedJitterState();
 
@@ -1408,7 +1418,7 @@ public class Scaffold extends Module {
         if (!skipScaffoldActionThisTick) {
             faceScaffoldRotation(targetBlock, placementTarget, preRotationTarget, targetBlockReplaceable);
 
-            if (targetBlockReplaceable && rotationMode.get().equalsIgnoreCase("math")) {
+            if (targetBlockReplaceable && isTracedAimMode()) {
                 PlacementTarget rotationTarget = findRotationPriorityPlacementTarget(targetBlock);
                 placementTarget = selectAdaptiveMathSearchTarget(targetBlock, placementTarget, rotationTarget);
                 lockedMathPlacementTarget = placementTarget;
@@ -1496,7 +1506,7 @@ public class Scaffold extends Module {
     private PlacementTarget findRotationPriorityPlacementTarget(BlockPos searchOrigin) {
         var level = mc.level;
         var player = mc.player;
-        if (searchOrigin == null || level == null || player == null || !rotationMode.get().equalsIgnoreCase("math"))
+        if (searchOrigin == null || level == null || player == null || !isTracedAimMode())
             return null;
 
         BlockHitResult hit = Client.rotationManager.rayTraceBlocks(
@@ -1533,7 +1543,7 @@ public class Scaffold extends Module {
         var player = mc.player;
         if (target == null || currentTargetBlock == null || level == null || player == null)
             return null;
-        if (!rotationMode.get().equalsIgnoreCase("math"))
+        if (!isTracedAimMode())
             return null;
         if (target.pos().getY() != currentTargetBlock.getY())
             return null;
@@ -1744,7 +1754,7 @@ public class Scaffold extends Module {
     }
 
     private boolean shouldConserveMathTellyBlocks() {
-        return rotationMode.get().equalsIgnoreCase("math")
+        return isTracedAimMode()
                 && isTellyMode()
                 && !shouldUseNormalScaffoldForTelly(mc.player)
                 && !isDownScaffoldActive();
@@ -1892,7 +1902,7 @@ public class Scaffold extends Module {
     }
 
     private float scaffoldSearchYaw() {
-        Float inputYaw = rotationMode.get().equalsIgnoreCase("math") && !isTellyMode()
+        Float inputYaw = isTracedAimMode() && !isTellyMode()
                 ? scaffoldInputDirection()
                 : null;
         float movementYaw = inputYaw != null ? inputYaw : MovementUtil.getMotionDirection();
@@ -2449,7 +2459,7 @@ public class Scaffold extends Module {
     }
 
     private boolean usesRayTracePlacementSearch() {
-        return rotationMode.get().equalsIgnoreCase("math") && !isNoHitCheckActive();
+        return isTracedAimMode() && !isNoHitCheckActive();
     }
 
     private static double placementReach() {
@@ -2462,16 +2472,38 @@ public class Scaffold extends Module {
     }
 
     private double placementRotationScore(float[] rotations, float currentYaw, float currentPitch) {
+        AimMode selectedMode = aimMode();
+        if (selectedMode == AimMode.RANDOM)
+            return 0.0D;
+
         float yawDiff = Math.abs(Mth.wrapDegrees(rotations[0] - currentYaw));
         float pitchDiff = Math.abs(rotations[1] - currentPitch);
-        return yawDiff + pitchDiff + mathMovementAlignmentScore(rotations[0]);
+        return yawDiff + pitchDiff + aimAlignmentScore(selectedMode, rotations[0]);
+    }
+
+    private double aimAlignmentScore(AimMode selectedMode, float targetYaw) {
+        return switch (selectedMode) {
+            case DIAGONAL -> diagonalAlignmentScore(targetYaw);
+            case EDGE -> mathMovementAlignmentScore(targetYaw) * AIM_MOVEMENT_WEIGHT;
+            case MATH -> mathMovementAlignmentScore(targetYaw);
+            case CENTER, NEAREST, RANDOM, LEGACY, NONE -> 0.0D;
+        };
+    }
+
+    private double diagonalAlignmentScore(float targetYaw) {
+        return Math.abs(Mth.wrapDegrees(targetYaw - nearestDiagonalYaw(getScaffoldMovementDirection())))
+                * AIM_DIAGONAL_WEIGHT;
+    }
+
+    private static float nearestDiagonalYaw(float yaw) {
+        return Mth.wrapDegrees(Math.round(yaw / AIM_DIAGONAL_STEP) * AIM_DIAGONAL_STEP);
     }
 
     private double smartPlacementHitScore(Vec3 hitPos, float[] rotations, float currentYaw, float currentPitch, Vec3 eyesPos, Vec3 faceCenter, Direction side, boolean currentCanHit) {
         double centerScore = normalizedFaceCenterDistanceSqr(hitPos, faceCenter, side);
         double score = placementRotationScore(rotations, currentYaw, currentPitch)
                 + eyesPos.distanceToSqr(hitPos) * 0.001D
-                + centerScore * MATH_FACE_CENTER_WEIGHT;
+                + centerScore * aimFaceCenterWeight();
 
         if (!isStablePlacementHit(hitPos, faceCenter, side))
             score += MATH_EDGE_HIT_PENALTY;
@@ -2480,6 +2512,16 @@ public class Scaffold extends Module {
             score += centerScore * 1.5D;
 
         return score;
+    }
+
+    private double aimFaceCenterWeight() {
+        return switch (aimMode()) {
+            case CENTER -> MATH_FACE_CENTER_WEIGHT * 12.0D;
+            case NEAREST -> MATH_FACE_CENTER_WEIGHT * 0.5D;
+            case DIAGONAL -> MATH_FACE_CENTER_WEIGHT * 0.25D;
+            case RANDOM, EDGE, LEGACY, NONE -> 0.0D;
+            case MATH -> MATH_FACE_CENTER_WEIGHT;
+        };
     }
 
     private double mathMovementAlignmentScore(float targetYaw) {
@@ -2850,14 +2892,42 @@ public class Scaffold extends Module {
         return noPlaceWhenSnapping.get();
     }
 
+    private enum AimMode {
+        MATH, CENTER, NEAREST, RANDOM, EDGE, DIAGONAL, LEGACY, NONE
+    }
+
+    private static AimMode aimMode() {
+        String value = rotationMode.get();
+        if (value.equalsIgnoreCase("center")) return AimMode.CENTER;
+        if (value.equalsIgnoreCase("nearest")) return AimMode.NEAREST;
+        if (value.equalsIgnoreCase("random")) return AimMode.RANDOM;
+        if (value.equalsIgnoreCase("edge")) return AimMode.EDGE;
+        if (value.equalsIgnoreCase("diagonal")) return AimMode.DIAGONAL;
+        if (value.equalsIgnoreCase("simple") || value.equalsIgnoreCase("backwards")) return AimMode.LEGACY;
+        if (value.equalsIgnoreCase("none")) return AimMode.NONE;
+        return AimMode.MATH;
+    }
+
+    private static boolean isTracedAimMode() {
+        AimMode selectedMode = aimMode();
+        return selectedMode == AimMode.MATH
+                || selectedMode == AimMode.CENTER
+                || selectedMode == AimMode.NEAREST
+                || selectedMode == AimMode.RANDOM
+                || selectedMode == AimMode.EDGE
+                || selectedMode == AimMode.DIAGONAL;
+    }
+
+    private static boolean isLegacyAimMode() {
+        return aimMode() == AimMode.LEGACY;
+    }
+
     private static boolean usesRotationSpeed() {
-        return rotationMode.get().equalsIgnoreCase("math")
-                || rotationMode.get().equalsIgnoreCase("simple")
-                || rotationMode.get().equalsIgnoreCase("backwards");
+        return isTracedAimMode() || isLegacyAimMode();
     }
 
     private static boolean usesMathPreRotation() {
-        return rotationMode.get().equalsIgnoreCase("math") && !isSnapRotationActive();
+        return isTracedAimMode() && !isSnapRotationActive();
     }
 
     private static boolean hasNoHitCheckOption() {
@@ -2866,7 +2936,7 @@ public class Scaffold extends Module {
 
     private static boolean canDisplayTellyAfterPlaceNoHitCheck() {
         return mode.get().equalsIgnoreCase("telly")
-                && rotationMode.get().equalsIgnoreCase("math")
+                && isTracedAimMode()
                 && hasNoHitCheckOption()
                 && !noHitCheck.get();
     }
@@ -2933,7 +3003,11 @@ public class Scaffold extends Module {
     }
 
     private static boolean isSnapRotationActive() {
-        return (rotationMode.get().equalsIgnoreCase("math") || rotationMode.get().equalsIgnoreCase("simple")) && snapRotation.get();
+        return usesSnappingRotation() && snapRotation.get();
+    }
+
+    private static boolean usesSnappingRotation() {
+        return isTracedAimMode() || rotationMode.get().equalsIgnoreCase("simple");
     }
 
     private float getRotationSpeed() {
@@ -3028,7 +3102,7 @@ public class Scaffold extends Module {
     }
 
     private PlacementTarget findPreRotationTarget(BlockPos currentTargetBlock) {
-        if (!rotationMode.get().equalsIgnoreCase("math"))
+        if (!isTracedAimMode())
             return null;
 
         var player = mc.player;
@@ -3148,7 +3222,7 @@ public class Scaffold extends Module {
     }
 
     private Float mathTellyPreparationPitch(PlacementTarget target) {
-        if (!rotationMode.get().equalsIgnoreCase("math") || isSnapRotationActive())
+        if (!isTracedAimMode() || isSnapRotationActive())
             return null;
 
         return target != null ? rotationsToHitPos(target.hitPos())[1] : simpleRotationTarget()[1];
@@ -3196,15 +3270,170 @@ public class Scaffold extends Module {
     }
 
     private void facePlacementTarget(PlacementTarget target) {
+        Vec3 placementAimPos = aimPosForTarget(target);
         if (!usesHumanizedMathRotation()) {
-            faceHitPos(target.hitPos(), getRotationSpeed());
+            faceHitPos(placementAimPos, getRotationSpeed());
             return;
         }
 
-        Vec3 aimPos = getHumanizedMathAimPos(target);
-        float[] rotations = rotationsToHitPos(aimPos);
+        float[] rotations = rotationsToHitPos(placementAimPos);
         float[] speeds = humanizedMathRotationSpeeds(rotations[0], rotations[1]);
         Client.rotationManager.startRotation(rotations[0], rotations[1], speeds[0], speeds[1]);
+    }
+
+    private Vec3 aimPosForTarget(PlacementTarget target) {
+        if (target == null)
+            return Vec3.ZERO;
+
+        AimMode selectedMode = aimMode();
+        if (selectedMode == AimMode.MATH)
+            return getHumanizedMathAimPos(target);
+
+        int currentTick = mc.player != null ? mc.player.tickCount : 0;
+        if (aimTarget != null
+                && samePlacementTarget(aimTarget, target)
+                && aimPos != null
+                && currentTick < aimRefreshTick
+                && isValidAimPoint(target, aimPos, false))
+            return aimPos;
+
+        var level = mc.level;
+        AABB bounds = collisionBounds(level != null ? level.getBlockState(target.neighbour()) : null, level, target.neighbour());
+        Vec3 faceCenter = placementFaceCenter(target.neighbour(), target.side(), bounds);
+        Vec3 candidate = switch (selectedMode) {
+            case CENTER -> clampedPlacementFaceHit(faceCenter, target.neighbour(), target.side());
+            case RANDOM -> randomFaceAimPos(target, faceCenter);
+            case EDGE -> edgeFaceAimPos(target, faceCenter);
+            case NEAREST -> nearestFaceAimPos(target, bounds);
+            case DIAGONAL -> diagonalFaceAimPos(target, bounds);
+            default -> target.hitPos();
+        };
+
+        if (candidate == null || !isValidAimPoint(target, candidate, false))
+            candidate = target.hitPos();
+
+        aimTarget = target;
+        aimPos = candidate;
+        aimRefreshTick = currentTick + (selectedMode == AimMode.RANDOM ? RandomUtil.nextInt(10, 21) : 1);
+        return candidate;
+    }
+
+    private Vec3 randomFaceAimPos(PlacementTarget target, Vec3 faceCenter) {
+        for (int attempt = 0; attempt < MATH_HUMAN_AIM_ATTEMPTS; attempt++) {
+            Vec3 candidate = clampedPlacementFaceHit(
+                    offsetPlacementFaceHit(faceCenter, target.side(),
+                            triangularRandomOffset(AIM_RANDOM_RADIUS),
+                            triangularRandomOffset(AIM_RANDOM_RADIUS)),
+                    target.neighbour(),
+                    target.side()
+            );
+            if (isValidAimPoint(target, candidate, false))
+                return candidate;
+        }
+
+        return null;
+    }
+
+    private Vec3 edgeFaceAimPos(PlacementTarget target, Vec3 faceCenter) {
+        Vec3 direction = getPreRotationDirection();
+        double length = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
+        if (length <= 1.0E-6D) {
+            float yaw = getScaffoldMovementDirection();
+            direction = new Vec3(-Math.sin(Math.toRadians(yaw)), 0.0D, Math.cos(Math.toRadians(yaw)));
+            length = 1.0D;
+        }
+
+        double offsetX = direction.x / length * AIM_EDGE_REACH;
+        double offsetZ = direction.z / length * AIM_EDGE_REACH;
+        Vec3 offset = switch (target.side().getAxis()) {
+            case X -> new Vec3(0.0D, 0.0D, offsetZ);
+            case Z -> new Vec3(offsetX, 0.0D, 0.0D);
+            case Y -> new Vec3(offsetX, 0.0D, offsetZ);
+        };
+
+        Vec3 candidate = clampedPlacementFaceHit(faceCenter.add(offset), target.neighbour(), target.side());
+        return isValidAimPoint(target, candidate, false) ? candidate : null;
+    }
+
+    private Vec3 nearestFaceAimPos(PlacementTarget target, AABB bounds) {
+        float currentYaw = Client.rotationManager.getRotationYaw();
+        float currentPitch = Client.rotationManager.getRotationPitch();
+        Vec3 best = null;
+        double bestScore = Double.MAX_VALUE;
+        for (Vec3 candidate : faceSamplePoints(target, bounds, AIM_NEAREST_SAMPLE_DIVISIONS)) {
+            float[] rotations = rotationsToHitPos(candidate);
+            double score = Math.abs(Mth.wrapDegrees(rotations[0] - currentYaw))
+                    + Math.abs(rotations[1] - currentPitch);
+            if (score >= bestScore)
+                continue;
+            if (!isValidAimPoint(target, candidate, false))
+                continue;
+
+            best = candidate;
+            bestScore = score;
+        }
+
+        return best;
+    }
+
+    private Vec3 diagonalFaceAimPos(PlacementTarget target, AABB bounds) {
+        float snappedYaw = nearestDiagonalYaw(getScaffoldMovementDirection());
+        Vec3 best = null;
+        double bestScore = Double.MAX_VALUE;
+        for (Vec3 candidate : faceSamplePoints(target, bounds, AIM_DIAGONAL_SAMPLE_DIVISIONS)) {
+            float[] rotations = rotationsToHitPos(candidate);
+            double score = Math.abs(Mth.wrapDegrees(rotations[0] - snappedYaw))
+                    + Math.abs(rotations[1] - 85.0F) * 0.02D;
+            if (score >= bestScore)
+                continue;
+            if (!isValidAimPoint(target, candidate, false))
+                continue;
+
+            best = candidate;
+            bestScore = score;
+        }
+
+        return best;
+    }
+
+    private static List<Vec3> faceSamplePoints(PlacementTarget target, AABB bounds, int divisions) {
+        AABB safeBounds = bounds != null ? bounds : new AABB(0.0D, 0.0D, 0.0D, 1.0D, 1.0D, 1.0D);
+        int steps = Math.max(1, divisions);
+        BlockPos neighbour = target.neighbour();
+        Direction side = target.side();
+        double inset = MATH_SAFE_HIT_INSET + MATH_ALIGNED_RAY_EPSILON * 2.0D;
+        List<Vec3> points = new ArrayList<>(steps * steps);
+
+        for (int firstIndex = 0; firstIndex < steps; firstIndex++) {
+            double firstFraction = (firstIndex + 0.5D) / steps;
+            for (int secondIndex = 0; secondIndex < steps; secondIndex++) {
+                double secondFraction = (secondIndex + 0.5D) / steps;
+                double x;
+                double y;
+                double z;
+                switch (side.getAxis()) {
+                    case X -> {
+                        x = neighbour.getX() + (side == Direction.EAST ? safeBounds.maxX : safeBounds.minX);
+                        y = neighbour.getY() + Mth.lerp(firstFraction, safeBounds.minY + inset, safeBounds.maxY - inset);
+                        z = neighbour.getZ() + Mth.lerp(secondFraction, safeBounds.minZ + inset, safeBounds.maxZ - inset);
+                    }
+                    case Y -> {
+                        y = neighbour.getY() + (side == Direction.UP ? safeBounds.maxY : safeBounds.minY);
+                        x = neighbour.getX() + Mth.lerp(firstFraction, safeBounds.minX + inset, safeBounds.maxX - inset);
+                        z = neighbour.getZ() + Mth.lerp(secondFraction, safeBounds.minZ + inset, safeBounds.maxZ - inset);
+                    }
+                    default -> {
+                        z = neighbour.getZ() + (side == Direction.SOUTH ? safeBounds.maxZ : safeBounds.minZ);
+                        x = neighbour.getX() + Mth.lerp(firstFraction, safeBounds.minX + inset, safeBounds.maxX - inset);
+                        y = neighbour.getY() + Mth.lerp(secondFraction, safeBounds.minY + inset, safeBounds.maxY - inset);
+                    }
+                }
+
+                points.add(new Vec3(x, y, z));
+            }
+        }
+
+        return points;
     }
 
     private static boolean usesHumanizedMathRotation() {
@@ -3250,6 +3479,10 @@ public class Scaffold extends Module {
     }
 
     private boolean isValidHumanizedMathAim(PlacementTarget target, Vec3 candidate) {
+        return isValidAimPoint(target, candidate, true);
+    }
+
+    private boolean isValidAimPoint(PlacementTarget target, Vec3 candidate, boolean checkMovementAlignment) {
         var player = mc.player;
         if (player == null || target == null || candidate == null)
             return false;
@@ -3258,14 +3491,16 @@ public class Scaffold extends Module {
         if (!isStablePlacementHit(candidate, target.neighbour(), target.side()))
             return false;
 
-        float[] baseRotations = rotationsToHitPos(target.hitPos());
         float[] candidateRotations = rotationsToHitPos(candidate);
-        Float movementYaw = movementFixMathInputYaw();
-        if (movementYaw != null) {
-            float baseError = mathMovementSignedAlignmentError(baseRotations[0], movementYaw);
-            float candidateError = mathMovementSignedAlignmentError(candidateRotations[0], movementYaw);
-            if (Math.abs(Mth.wrapDegrees(candidateError - baseError)) > MATH_HUMAN_AIM_ERROR_TOLERANCE)
-                return false;
+        if (checkMovementAlignment) {
+            float[] baseRotations = rotationsToHitPos(target.hitPos());
+            Float movementYaw = movementFixMathInputYaw();
+            if (movementYaw != null) {
+                float baseError = mathMovementSignedAlignmentError(baseRotations[0], movementYaw);
+                float candidateError = mathMovementSignedAlignmentError(candidateRotations[0], movementYaw);
+                if (Math.abs(Mth.wrapDegrees(candidateError - baseError)) > MATH_HUMAN_AIM_ERROR_TOLERANCE)
+                    return false;
+            }
         }
 
         BlockHitResult hit = Client.rotationManager.rayTraceBlocks(
@@ -3413,6 +3648,9 @@ public class Scaffold extends Module {
         humanizedMathYawSpeed = Float.NaN;
         humanizedMathPitchSpeed = Float.NaN;
         humanizedMathSpeedBias = 0.0F;
+        aimTarget = null;
+        aimPos = null;
+        aimRefreshTick = Integer.MIN_VALUE;
         rotationSpeedJitter.reset();
         mathPitchSpeedJitter.reset();
     }
@@ -3470,7 +3708,7 @@ public class Scaffold extends Module {
 
     private void faceHitPos(Vec3 hitPos, float speed) {
         float[] rotations = rotationsToHitPos(hitPos);
-        if (rotationMode.get().equalsIgnoreCase("math") && !isDownScaffoldActive())
+        if (isTracedAimMode() && !isDownScaffoldActive())
             Client.rotationManager.startRotation(rotations[0], rotations[1], speed, getMathPitchRotationSpeed());
         else
             Client.rotationManager.startRotation(rotations[0], rotations[1], speed);
