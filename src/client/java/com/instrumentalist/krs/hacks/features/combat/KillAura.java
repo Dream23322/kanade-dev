@@ -6,6 +6,7 @@ import com.instrumentalist.krs.utils.render.RenderColors;
 import com.instrumentalist.krs.Client;
 import com.instrumentalist.krs.events.features.HandleInputEvent;
 import com.instrumentalist.krs.events.features.Render3DEvent;
+import com.instrumentalist.krs.events.features.RenderHudEvent;
 import com.instrumentalist.krs.events.features.SendPacketEvent;
 import com.instrumentalist.krs.events.features.TickEvent;
 import com.instrumentalist.krs.hacks.Module;
@@ -52,6 +53,7 @@ import net.minecraft.world.phys.Vec3;
 import com.instrumentalist.krs.utils.input.Keys;
 import com.instrumentalist.krs.utils.render.PathLines;
 import com.instrumentalist.krs.utils.render.RenderUtil;
+import com.instrumentalist.krs.utils.render.TargetBoxRenderer;
 
 import java.util.*;
 
@@ -226,6 +228,12 @@ public class KillAura extends Module {
             "Target Prediction",
             true
     ).describe("Predicts target movement and attacks ahead of it.");
+
+    @Setting
+    private final BooleanValue render = new BooleanValue(
+            "Render",
+            true
+    ).describe("Draws a theme-coloured box around the current target.");
 
     @Setting
     private final BooleanValue shieldBreaker = new BooleanValue(
@@ -2025,6 +2033,16 @@ public class KillAura extends Module {
         }
 
         PathLines.show(this, PREDICTION_LINE, null, predictionPoints, RenderColors.KILL_AURA_PREDICTION);
+    }
+
+    @Override
+    public void onRenderHud(RenderHudEvent event) {
+        Entity target = closestEntity;
+        if (!render.get() || target == null || target.isRemoved() || Client.nanoVgManager == null)
+            return;
+
+        Vec3 position = RenderUtil.INSTANCE.getLerpedPos(target, event.tickDelta);
+        Client.nanoVgManager.loadWorldAnchored(vg -> TargetBoxRenderer.render(target, position, vg));
     }
 
     private static boolean isSameExactPosition(Vec3 first, Vec3 second) {

@@ -1,7 +1,9 @@
 package com.instrumentalist.krs.hacks.features.combat;
 
+import com.instrumentalist.krs.Client;
 import com.instrumentalist.krs.events.features.AttackEvent;
 import com.instrumentalist.krs.events.features.ReceivedPacketEvent;
+import com.instrumentalist.krs.events.features.RenderHudEvent;
 import com.instrumentalist.krs.events.features.Render3DEvent;
 import com.instrumentalist.krs.events.features.UpdateEvent;
 import com.instrumentalist.krs.events.features.WorldEvent;
@@ -18,6 +20,7 @@ import com.instrumentalist.krs.utils.packet.ServerPositionTracker;
 import com.instrumentalist.krs.utils.render.PathLines;
 import com.instrumentalist.krs.utils.render.RenderColors;
 import com.instrumentalist.krs.utils.render.RenderUtil;
+import com.instrumentalist.krs.utils.render.TargetBoxRenderer;
 import com.instrumentalist.krs.utils.value.BooleanValue;
 import com.instrumentalist.krs.utils.value.FloatValue;
 import com.instrumentalist.krs.utils.value.IntValue;
@@ -57,6 +60,12 @@ public class Backtrack extends Module {
             new String[]{"Attack", "Range"},
             "Attack"
     ).describe("Attack backtracks the entity you hit, Range the nearest enemy in range.");
+
+    @Setting
+    private final BooleanValue render = new BooleanValue(
+            "Render",
+            true
+    ).describe("Draws a theme-coloured box around the backtracked target.");
 
     @Setting
     private final FloatValue minRange = new FloatValue(
@@ -347,6 +356,21 @@ public class Backtrack extends Module {
             showLine(SELF_LINE, RenderUtil.INSTANCE.getLerpedPos(mc.player, event.partialTicks), serverSelf);
         else
             PathLines.hide(this, SELF_LINE);
+    }
+
+    @Override
+    public void onRenderHud(RenderHudEvent event) {
+        Entity current = target;
+        if (!render.get() || current == null || current.isRemoved() || Client.nanoVgManager == null)
+            return;
+
+        Vec3 position = isBacktracking() && trackedPosition != null
+                ? trackedPosition
+                : RenderUtil.INSTANCE.getLerpedPos(current, event.tickDelta);
+        if (position == null)
+            return;
+
+        Client.nanoVgManager.loadWorldAnchored(vg -> TargetBoxRenderer.render(current, position, vg));
     }
 
     private void showLine(Object key, Vec3 from, Vec3 to) {
