@@ -236,6 +236,12 @@ public class KillAura extends Module {
     ).describe("Draws a theme-coloured box around the current target.");
 
     @Setting
+    private final BooleanValue walls = new BooleanValue(
+            "Walls",
+            true
+    ).describe("Draws filled target-box walls without the glowing outline.");
+
+    @Setting
     private final BooleanValue shieldBreaker = new BooleanValue(
             "Shield Breaker",
             false
@@ -2042,7 +2048,7 @@ public class KillAura extends Module {
             return;
 
         Vec3 position = RenderUtil.INSTANCE.getLerpedPos(target, event.tickDelta);
-        Client.nanoVgManager.loadWorldAnchored(vg -> TargetBoxRenderer.render(target, position, vg));
+        Client.nanoVgManager.loadWorldAnchored(vg -> TargetBoxRenderer.render(target, position, vg, walls.get()));
     }
 
     private static boolean isSameExactPosition(Vec3 first, Vec3 second) {

@@ -12,6 +12,7 @@ import com.instrumentalist.krs.hacks.features.movement.LongJump;
 import com.instrumentalist.krs.hacks.features.player.Freecam;
 import com.instrumentalist.krs.hacks.features.render.Ambience;
 import com.instrumentalist.krs.hacks.features.render.Zoom;
+import com.instrumentalist.krs.hacks.features.combat.SilentAura;
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import com.llamalad7.mixinextras.injector.ModifyReturnValue;
 import net.minecraft.client.DeltaTracker;
@@ -132,24 +133,31 @@ public abstract class CameraMixin implements IMinecraft {
                     target = "Lnet/minecraft/client/Camera;alignWithEntity(F)V",
                     shift = At.Shift.AFTER))
     private void cameraModuleHook(DeltaTracker deltaTracker, CallbackInfo ci) {
-        if (!com.instrumentalist.krs.hacks.features.render.Camera.isFreeLooking() || entity == null || ModuleManager.getModuleState(Freecam.class) && Freecam.getCanFly())
+        boolean cameraFreeLook = com.instrumentalist.krs.hacks.features.render.Camera.isFreeLooking();
+        boolean silentFreeLook = SilentAura.isFreeLooking();
+        if ((!cameraFreeLook && !silentFreeLook) || entity == null || ModuleManager.getModuleState(Freecam.class) && Freecam.getCanFly())
             return;
 
         float partialTicks = TimerUtil.selfPartialTick(deltaTracker.getGameTimeDeltaPartialTick(true));
-        float yaw = com.instrumentalist.krs.hacks.features.render.Camera.getLookYaw();
-        float pitch = com.instrumentalist.krs.hacks.features.render.Camera.getLookPitch();
+        float yaw = cameraFreeLook
+                ? com.instrumentalist.krs.hacks.features.render.Camera.getLookYaw()
+                : SilentAura.getCameraYaw();
+        float pitch = cameraFreeLook
+                ? com.instrumentalist.krs.hacks.features.render.Camera.getLookPitch()
+                : SilentAura.getCameraPitch();
         if (mc.options.getCameraType().isMirrored()) {
             yaw += 180.0F;
             pitch = -pitch;
         }
 
-        detached = true;
+        detached = !mc.options.getCameraType().isFirstPerson();
         if (LegacyRenderer.isCameraActive() && !Float.isNaN(LegacyRenderer.eyeHeight(entity)))
             setPosition(entity.getPosition(partialTicks).add(0.0D, Mth.lerp(partialTicks, this.eyeHeightOld, this.eyeHeight), 0.0D));
         else
             setPosition(entity.getEyePosition(partialTicks));
         setRotation(yaw, pitch);
-        move(-getMaxZoom(krs$thirdPersonDistance()), 0.0F, 0.0F);
+        if (!mc.options.getCameraType().isFirstPerson())
+            move(-getMaxZoom(krs$thirdPersonDistance()), 0.0F, 0.0F);
     }
 
     @Unique

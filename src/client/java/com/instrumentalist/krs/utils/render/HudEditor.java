@@ -14,6 +14,7 @@ import com.instrumentalist.krs.utils.input.Keys;
 import com.instrumentalist.krs.utils.nanovg.NVGFonts;
 import com.instrumentalist.krs.utils.nanovg.NanoVGManager;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.gui.screens.Screen;
 import org.nvgu.NVGU;
 import org.nvgu.util.Alignment;
@@ -209,12 +210,12 @@ public final class HudEditor {
         return SCALE.getOrDefault(element, 1f);
     }
 
-    /** True only while the dedicated HUD editor screen is open; opening chat must not start editing. */
+    /** True while the dedicated editor is open or chat is being used as the in-game HUD editor. */
     public static boolean isEditing() {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || minecraft.gui == null) return false;
         Screen screen = minecraft.gui.screen();
-        return screen instanceof HudEditorScreen;
+        return screen instanceof HudEditorScreen || screen instanceof ChatScreen;
     }
 
     public static void beginFrame() {
@@ -700,7 +701,7 @@ public final class HudEditor {
         vg.rectangle(centerX - half, centerY - half, half * 2f, half * 2f, color);
     }
 
-    private static final int NOTIFICATION_PANEL_ROWS = 11;
+    private static final int NOTIFICATION_PANEL_ROWS = 12;
 
     private static boolean handleNotificationPanelClick(float x, float y) {
         Panel panel = panelLayout();
@@ -736,7 +737,8 @@ public final class HudEditor {
                     Interface.notificationMax.get() + (increase ? 1 : -1), 1, 10));
             case 8 -> Interface.notificationProgress.set(!Interface.notificationProgress.get());
             case 9 -> Interface.notificationIcons.set(!Interface.notificationIcons.get());
-            case 10 -> resetElement(Element.NOTIFICATIONS);
+            case 10 -> Interface.notificationModuleToggle.set(!Interface.notificationModuleToggle.get());
+            case 11 -> resetElement(Element.NOTIFICATIONS);
             default -> {
             }
         }
@@ -755,7 +757,8 @@ public final class HudEditor {
             case 7 -> "Max Visible";
             case 8 -> "Progress Bar";
             case 9 -> "Icons";
-            case 10 -> "Reset Position";
+            case 10 -> "Module Toggles";
+            case 11 -> "Reset Position";
             default -> "";
         };
     }
@@ -772,7 +775,8 @@ public final class HudEditor {
             case 7 -> Integer.toString(Interface.notificationMax.get());
             case 8 -> Interface.notificationProgress.get() ? "ON" : "OFF";
             case 9 -> Interface.notificationIcons.get() ? "ON" : "OFF";
-            case 10 -> "Click";
+            case 10 -> Interface.notificationModuleToggle.get() ? "ON" : "OFF";
+            case 11 -> "Click";
             default -> "";
         };
     }
@@ -800,9 +804,10 @@ public final class HudEditor {
                 case 2 -> Interface.notificationCombine.get();
                 case 8 -> Interface.notificationProgress.get();
                 case 9 -> Interface.notificationIcons.get();
+                case 10 -> Interface.notificationModuleToggle.get();
                 default -> true;
             };
-            Color labelColor = row == 10 ? NanoVGTheme.accent(220)
+            Color labelColor = row == 11 ? NanoVGTheme.accent(220)
                     : hovered ? NanoVGTheme.text(245) : NanoVGTheme.text(220);
             NVGFonts.INTER.drawText(label, rowLeft + 5f, top + 4.5f, 8f,
                     labelColor, Alignment.LEFT_TOP, true);
@@ -923,7 +928,10 @@ public final class HudEditor {
                 new Color(214, 107, 232, 120), Border.INSIDE);
         NanoVGTheme.drawTrackedText(NVGFonts.INTER_MEDIUM, "HUD EDITOR", bannerX + 10f,
                 bannerY + 6f, 10f, 0.9f, NanoVGTheme.text(245), true);
-        String hint = "Drag / resize  ·  Right click HUD  ·  R reset  ·  Esc done";
+        boolean inChat = Minecraft.getInstance().gui.screen() instanceof ChatScreen;
+        String hint = inChat
+                ? "Drag / resize  ·  Right click HUD  ·  Esc done"
+                : "Drag / resize  ·  Right click HUD  ·  R reset  ·  Esc done";
         NVGFonts.INTER.drawText(hint, bannerX + bannerWidth - 10f, bannerY + 8f, 7.5f,
                 NanoVGTheme.dim(220), Alignment.RIGHT_TOP, true);
     }

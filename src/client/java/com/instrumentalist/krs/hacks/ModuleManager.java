@@ -69,14 +69,14 @@ public class ModuleManager implements EventListener {
 
         modules.addAll(List.of(
                 new SpeedModule(), new FlyModule(), new ElytraFly(), new EntityControl(), new NoBreakCooldown(), new NoPlaceCooldown(),
-                new Interface(), new KillAura(), new Backtrack(), new FakeLag(),
+                new Interface(), new KillAura(), new SilentAura(), new Backtrack(), new FakeLag(),
                 new SpinBot(), new BrandSpoofer(), new AntiBot(), new AutoPot(), new Criticals(),
                 new Teams(), new Velocity(), new Phase(), new ServerCrasher(), new Spammer(),
                 new PerfectHorseJump(), new InventoryMove(), new Jesus(), new NoSlow(), new LongJump(),
                 new ChestStealer(), new ChestAura(), new FastLadder(), new InvManager(), new NoFall(),
-                new Sprint(), new ThunderDetector(), new KillEffect(), new HitMarker(), new Trails(), new NoRender(), new Camera(),
+                new Sprint(), new ThunderDetector(), new KillEffect(), new HitMarker(), new Trails(), new Pointers(), new NoRender(), new Camera(),
                 new AntiBlind(), new Breaker(), new CivBreak(), new Timer(), new Nuker(), new NoteBot(),
-                new Xray(), new CaveFinder(), new Scaffold(), new Blink(), new TransactionConfirmBlinker(), new ExploitPatcher(),
+                new Xray(), new CaveFinder(), new Scaffold(), new LegitScaffold(), new Blink(), new TransactionConfirmBlinker(), new ExploitPatcher(),
                 new PortalScreen(), new FullBright(), new TargetStrafe(), new DisablerModule(),
                 new OldHitting(), new Freecam(), new Capes(), new MurdererDetector(),
                 new FastBow(), new FastEat(), new HitBoxes(),
@@ -91,7 +91,7 @@ public class ModuleManager implements EventListener {
                 new PacketDuper(), new SneakSpam(), new ImGui(), new ClickGui(), new ConsoleSpammer(),
                 new Reach(), new NoCombatDelay(), new AutoBypass(), new PingDisabler(), new QuickMacro(),
                 new CrossbowExploit(), new WTap(), new PianoProGamer(),
-                new SafeWalk(), new Parkour(), new AutoWalk(), new AutoRespawn(),
+                new SafeWalk(), new Parkour(), new AutoWalk(), new AutoRespawn(), new Rewound(),
                 new AutoLeave(), new AutoSneak(), new MiddleClick(), new AntiAFK(),
                 new NoBlockEffects(), new AntiLevitation(), new FastFall(),
                 new Spider(), new AutoTotem(), new ItemDropChanger(), new VisualSpoofer(),
@@ -233,7 +233,7 @@ public class ModuleManager implements EventListener {
         for (Module module : modules) {
             if (module.tempEnabled && (module instanceof PluginsDetector || module instanceof Blink))
                 module.toggle();
-            else if (module.tempEnabled && (module instanceof InvManager || module instanceof ChestStealer || module instanceof Scaffold || module instanceof KillAura)) {
+            else if (module.tempEnabled && (module instanceof InvManager || module instanceof ChestStealer || module instanceof Scaffold || module instanceof LegitScaffold || module instanceof KillAura || module instanceof SilentAura)) {
                 module.toggle();
                 Client.notificationManager.addNotification("World Change", "Automatically disabled " + module.moduleName);
             }
@@ -348,7 +348,7 @@ public class ModuleManager implements EventListener {
         if (mc.gui.screen() == null) {
             for (Module m : allModules) {
                 if (event.key == m.key && event.action == Keys.PRESS)
-                    m.toggle();
+                    m.toggleByUser();
             }
         }
 

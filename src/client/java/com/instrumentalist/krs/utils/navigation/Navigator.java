@@ -49,14 +49,21 @@ public final class Navigator implements EventListener {
     private static final int MOVE_TIMEOUT = 200;
     private static final int MAX_REPLANS = 8;
     private static final int FOLLOW_RADIUS = 2;
+    private static final int STALK_RETARGET_TICKS = 10;
     private static final double TURN_RATE = 30.0D;
     private static final double MAX_TURN_SPEED = 1800.0D;
     private static final Direction[] PLACE_ORDER = {Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST, Direction.UP};
     private static final double[] FACE_OFFSETS = {0.0D, 0.3D, -0.3D};
 
+    private enum Mode {
+        GOTO,
+        STALK
+    }
+
     private boolean active;
     private boolean controlling;
     private boolean registered;
+    private Mode mode = Mode.GOTO;
     private NavGoal goal;
     private String label = "";
     private UUID targetId;
@@ -147,6 +154,46 @@ public final class Navigator implements EventListener {
         return "Player " + parts[0] + " was not found nearby";
     }
 
+    public static String stalk(String arguments) {
+        LocalPlayer player = mc.player;
+        ClientLevel level = mc.level;
+        if (player == null || level == null)
+            return "player is null";
+
+        String name = arguments == null ? "" : arguments.trim();
+        if (name.isEmpty())
+            return "Usage: stalk <player>";
+
+        for (Player other : level.players()) {
+            if (other == player || !other.getName().getString().equalsIgnoreCase(name))
+                continue;
+
+            BlockPos pos = other.blockPosition();
+            INSTANCE.begin(
+                    new NavGoal.Near(pos.getX(), pos.getY(), pos.getZ(), FOLLOW_RADIUS),
+                    "stalking " + other.getName().getString(),
+                    other.getUUID(),
+                    pos,
+                    Mode.STALK
+            );
+            return "Stalking " + other.getName().getString();
+        }
+
+        return "Player " + name + " was not found nearby";
+    }
+
+    public static boolean isStalking(String name) {
+        return INSTANCE.active
+                && INSTANCE.mode == Mode.STALK
+                && name != null
+                && ("stalking " + name).equalsIgnoreCase(INSTANCE.label);
+    }
+
+    public static void stop() {
+        if (INSTANCE.active)
+            INSTANCE.halt(null);
+    }
+
     public static boolean suppressManualMining() {
         return INSTANCE.active && INSTANCE.controlling;
     }
@@ -174,9 +221,14 @@ public final class Navigator implements EventListener {
     }
 
     private void begin(NavGoal goal, String label, UUID targetId, BlockPos targetPos) {
+        begin(goal, label, targetId, targetPos, Mode.GOTO);
+    }
+
+    private void begin(NavGoal goal, String label, UUID targetId, BlockPos targetPos, Mode mode) {
         if (active)
             halt(null);
 
+        this.mode = mode;
         this.goal = goal;
         this.label = label;
         this.targetId = targetId;
@@ -192,6 +244,7 @@ public final class Navigator implements EventListener {
     }
 
     private void halt(String message) {
+        Mode haltedMode = mode;
         MultiPlayerGameMode gameMode = mc.gameMode;
         if (gameMode != null)
             stopBreaking(gameMode);
@@ -200,6 +253,7 @@ public final class Navigator implements EventListener {
         controlling = false;
         breaking = false;
         hasAim = false;
+        mode = Mode.GOTO;
         targetId = null;
         resetPath();
         clearControls();
@@ -210,7 +264,10 @@ public final class Navigator implements EventListener {
         if (message != null) {
             ChatUtil.printChat(message);
             if (Client.notificationManager != null)
-                Client.notificationManager.addNotification("Goto", message);
+                Client.notificationManager.addNotification(switch (haltedMode) {
+                    case STALK -> "Stalk";
+                    default -> "Goto";
+                }, message);
         }
     }
 
@@ -310,10 +367,20 @@ public final class Navigator implements EventListener {
         controlling = true;
 
         updateTarget(level);
+        if (!active)
+            return;
 
         BlockPos feet = BlockPos.containing(player.getX(), player.getY() + 0.5D, player.getZ());
         boolean grounded = player.onGround() || player.isInWater();
         if (grounded && goal.reached(feet.getX(), feet.getY(), feet.getZ())) {
+            if (mode == Mode.STALK) {
+                stopBreaking(gameMode);
+                resetPath();
+                clearControls();
+                controlling = false;
+                return;
+            }
+
             halt("Arrived at " + label);
             return;
         }
@@ -345,8 +412,26 @@ public final class Navigator implements EventListener {
             retargetCooldown--;
 
         Player target = level.getPlayerByUUID(targetId);
-        if (target == null)
+        if (target == null) {
+            if (mode == Mode.STALK)
+                halt("Stalk stopped: target lost");
             return;
+        }
+
+        if (mode == Mode.STALK) {
+            if (retargetCooldown > 0)
+                return;
+
+            BlockPos pos = target.blockPosition();
+            if (plannedTarget != null && pos.distSqr(plannedTarget) <= 4.0D)
+                return;
+
+            plannedTarget = pos;
+            retargetCooldown = STALK_RETARGET_TICKS;
+            goal = new NavGoal.Near(pos.getX(), pos.getY(), pos.getZ(), FOLLOW_RADIUS);
+            resetPath();
+            return;
+        }
 
         BlockPos pos = target.blockPosition();
         if (retargetCooldown > 0 || plannedTarget != null && pos.distSqr(plannedTarget) <= 16.0D)

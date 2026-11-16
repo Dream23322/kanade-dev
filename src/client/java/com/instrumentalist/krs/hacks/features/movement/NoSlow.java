@@ -36,8 +36,8 @@ import java.util.Locale;
 public class NoSlow extends Module {
 
     @Setting
-    private static final ListValue mode = new ListValue("Mode", new String[]{"Vanilla", "Hypixel NCP", "Watchdog Legacy"}, "Vanilla")
-            .describe("Bypass used to remove the slowdown.");
+    private static final ListValue mode = new ListValue("Mode", new String[]{"Vanilla", "Hypixel NCP", "Watchdog Legacy", "Grim"}, "Vanilla")
+            .describe("Bypass used to remove the slowdown. Grim uses LiquidBounce's Grim 2.3.71 packet bypass.");
 
     @Setting
     private static final BooleanValue sneak = new BooleanValue("Sneak", false, () -> mode.get().equalsIgnoreCase("vanilla"))
@@ -53,6 +53,8 @@ public class NoSlow extends Module {
 
     private static int lastSneakInputTick = Integer.MIN_VALUE;
     private boolean waitingPacket = false;
+    private int grimSequenceTicks;
+    private int grimBurstRemaining;
 
     @Override
     public String description() {
@@ -72,6 +74,7 @@ public class NoSlow extends Module {
     public void onDisable() {
         lastSneakInputTick = Integer.MIN_VALUE;
         waitingPacket = false;
+        resetGrimPackets();
     }
 
     @Override
@@ -148,6 +151,11 @@ public class NoSlow extends Module {
         var player = mc.player;
         if (player == null) return;
 
+        if (mode.get().equalsIgnoreCase("grim"))
+            updateGrimPackets(player);
+        else
+            resetGrimPackets();
+
         if (isInWeb()) {
             if (MovementUtil.isMoving())
                 MovementUtil.setSpeed(Math.max(MovementUtil.getSpeed(), webSpeed.get()));
@@ -198,7 +206,7 @@ public class NoSlow extends Module {
         switch (mode.get().toLowerCase(Locale.ROOT)) {
             case "vanilla":
                 return shouldNoSlowSneak() || shouldNoSlowUseItem();
-            case "hypixel ncp", "watchdog legacy":
+            case "hypixel ncp", "watchdog legacy", "grim":
                 return shouldNoSlowUseItem();
         }
         return false;
@@ -225,9 +233,54 @@ public class NoSlow extends Module {
                         || animation == ItemUseAnimation.BLOCK
                         || animation == ItemUseAnimation.BOW;
             }
+            case "grim":
+                return fastUseItem;
         }
 
         return false;
+    }
+
+    private void updateGrimPackets(LocalPlayer player) {
+        if (!shouldNoSlowUseItem() || !isGrimUseAnimation(currentUseAnimation(player))) {
+            resetGrimPackets();
+            return;
+        }
+
+        // LiquidBounce's Grim 2.3.71 bypass sends two sequenced use-item packets
+        // one tick apart, then repeats after a short pause.
+        if (grimBurstRemaining > 0) {
+            sendGrimUseItem(player);
+            grimBurstRemaining--;
+            return;
+        }
+
+        if (++grimSequenceTicks >= 2) {
+            sendGrimUseItem(player);
+            grimSequenceTicks = 0;
+            grimBurstRemaining = 1;
+        }
+    }
+
+    private void sendGrimUseItem(LocalPlayer player) {
+        var level = mc.level;
+        var gameMode = mc.gameMode;
+        if (level == null || gameMode == null)
+            return;
+
+        InteractionHand hand = player.isUsingItem()
+                ? player.getUsedItemHand()
+                : InteractionHand.MAIN_HAND;
+        gameMode.startPrediction(level, sequence -> new ServerboundUseItemPacket(
+                hand,
+                sequence,
+                player.getYRot(),
+                player.getXRot()
+        ));
+    }
+
+    private void resetGrimPackets() {
+        grimSequenceTicks = 0;
+        grimBurstRemaining = 0;
     }
 
     private static boolean isInWeb() {
@@ -261,6 +314,17 @@ public class NoSlow extends Module {
 
         Input input = player.input.keyPresses;
         return input != null && input.shift();
+    }
+
+    private static boolean isGrimUseAnimation(ItemUseAnimation animation) {
+        return animation == ItemUseAnimation.EAT
+                || animation == ItemUseAnimation.DRINK
+                || animation == ItemUseAnimation.BLOCK
+                || animation == ItemUseAnimation.BOW
+                || animation == ItemUseAnimation.CROSSBOW
+                || animation == ItemUseAnimation.TRIDENT
+                || animation == ItemUseAnimation.SPEAR
+                || animation == ItemUseAnimation.BUNDLE;
     }
 
     private static boolean isFastUseAnimation(ItemUseAnimation animation) {

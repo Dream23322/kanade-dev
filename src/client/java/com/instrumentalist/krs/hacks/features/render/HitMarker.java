@@ -32,15 +32,25 @@ public class HitMarker extends Module {
     private static final int MAX_3D_MARKERS = 8;
     private static final float[] PROJECTION = new float[3];
     private static final float POP_DURATION_MS = 110f;
+    private static final float NURSULTAN_SPIN_FREQUENCY = 20f;
+    private static final float NURSULTAN_BASE_SPEED = 3f;
+    private static final float NURSULTAN_SPEED_SWING = 2.2f;
     private static final float[] DASH_STARTS = {0.06f, 0.40f, 0.74f};
     private static final float[] DASH_ENDS = {0.30f, 0.64f, 0.94f};
 
     @Setting
     private final ListValue style = new ListValue(
             "Style",
-            new String[]{"Classic X", "Bold X", "Long X", "Split X", "Chevron X", "Dotted X", "CS2 Ticks", "Diamond", "Ring"},
+            new String[]{"Classic X", "Bold X", "Long X", "Split X", "Chevron X", "Dotted X", "CS2 Ticks", "Diamond", "Ring",
+                    "Nursultan", "Sharp X"},
             "Classic X"
     ).describe("Shape of the hit marker.");
+
+    @Setting
+    private final BooleanValue reverseTriangles = new BooleanValue(
+            "Sharp X Reverse Triangles",
+            false
+    ).describe("Points the Sharp X blades toward the centre instead of outward.");
 
     @Setting
     private final ListValue placement = new ListValue(
@@ -225,9 +235,11 @@ public class HitMarker extends Module {
         float currentProgress = progressAt(now, crosshairStartNanos);
         float currentAlpha = alpha;
         boolean currentBloom = bloom.get();
+        boolean currentReverse = reverseTriangles.get();
 
         Client.nanoVgManager.load(vg -> drawMarker(vg, x, y, currentStyle, currentSize,
-                currentGap, currentThickness, currentScale, currentAlpha, currentProgress, currentBloom));
+                currentGap, currentThickness, currentScale, currentAlpha, currentProgress, currentBloom,
+                now - crosshairStartNanos, currentReverse));
     }
 
     private void drawWorldMarkers(NVGU vg, long now) {
@@ -236,6 +248,7 @@ public class HitMarker extends Module {
         float currentGap = gap.get();
         float currentThickness = thickness.get();
         boolean currentBloom = bloom.get();
+        boolean currentReverse = reverseTriangles.get();
 
         for (Marker marker : markers) {
             if (!marker.projected)
@@ -247,7 +260,8 @@ public class HitMarker extends Module {
 
             drawMarker(vg, marker.screenX, marker.screenY, currentStyle, currentSize,
                     currentGap, currentThickness, scaleAt(now, marker.startNanos), alpha,
-                    progressAt(now, marker.startNanos), currentBloom);
+                    progressAt(now, marker.startNanos), currentBloom, now - marker.startNanos,
+                    currentReverse);
         }
     }
 
@@ -309,7 +323,8 @@ public class HitMarker extends Module {
     }
 
     private static void drawMarker(NVGU vg, float x, float y, String style, float size, float gap,
-                                   float thickness, float scale, float alpha, float progress, boolean bloom) {
+                                   float thickness, float scale, float alpha, float progress, boolean bloom,
+                                   long ageNanos, boolean reverseTriangles) {
         if (vg == null || alpha <= 0f)
             return;
 
@@ -319,6 +334,7 @@ public class HitMarker extends Module {
         int alphaInt = Math.max(0, Math.min(255, Math.round(alpha * 255f)));
         Color color = NanoVGTheme.accent(alphaInt);
         long handle = vg.getHandle();
+        float nursultanExpansion = "Nursultan".equals(style) ? nursultanScale(ageNanos) : 1f;
 
         switch (style) {
             case "Bold X" -> {
@@ -332,6 +348,9 @@ public class HitMarker extends Module {
             default -> {
             }
         }
+
+        float drawHalf = half * nursultanExpansion;
+        float drawStroke = strokeWidth * nursultanExpansion;
 
         nvgSave(handle);
         nvgGlobalCompositeOperation(handle, NVG_SOURCE_OVER);
@@ -347,17 +366,96 @@ public class HitMarker extends Module {
             case "CS2 Ticks" -> drawTicks(handle, x, y, half, gapPx);
             case "Diamond" -> drawDiamond(handle, x, y, half, gapPx);
             case "Ring" -> drawRing(handle, x, y, half, gapPx, progress);
+            case "Nursultan" -> drawNursultan(handle, x, y, drawHalf, gapPx, ageNanos);
+            case "Sharp X" -> drawSharpX(handle, x, y, half, gapPx, reverseTriangles);
             default -> drawX(handle, x, y, half, gapPx);
         }
 
         if (bloom)
-            drawBloom(handle, vg, half, strokeWidth, alphaInt);
+            drawBloom(handle, vg, drawHalf, drawStroke, alphaInt);
 
         nvgGlobalCompositeOperation(handle, NVG_SOURCE_OVER);
-        nvgStrokeWidth(handle, strokeWidth);
-        nvgStrokeColor(handle, vg.createAndStoreColour(color));
-        nvgStroke(handle);
+        if ("Sharp X".equals(style)) {
+            nvgFillColor(handle, vg.createAndStoreColour(color));
+            nvgFill(handle);
+        } else {
+            nvgStrokeWidth(handle, drawStroke);
+            nvgStrokeColor(handle, vg.createAndStoreColour(color));
+            nvgStroke(handle);
+        }
         nvgRestore(handle);
+    }
+
+    private static float nursultanScale(long ageNanos) {
+        float ageSeconds = Math.max(0f, ageNanos / 1_000_000_000f);
+        float speed = NURSULTAN_BASE_SPEED
+                - NURSULTAN_SPEED_SWING * (float) Math.cos(ageSeconds * NURSULTAN_SPIN_FREQUENCY);
+        float minSpeed = NURSULTAN_BASE_SPEED - NURSULTAN_SPEED_SWING;
+        float normalizedSpeed = Math.clamp(
+                (speed - minSpeed) / (NURSULTAN_SPEED_SWING * 2f), 0f, 1f);
+        return 1f + 0.25f * normalizedSpeed;
+    }
+
+    private static void drawNursultan(long handle, float x, float y, float half, float gap, long ageNanos) {
+        float ageSeconds = Math.max(0f, ageNanos / 1_000_000_000f);
+        float angle = NURSULTAN_BASE_SPEED * ageSeconds
+                - (NURSULTAN_SPEED_SWING / NURSULTAN_SPIN_FREQUENCY)
+                * (float) Math.sin(ageSeconds * NURSULTAN_SPIN_FREQUENCY);
+        float cos = (float) Math.cos(angle);
+        float sin = (float) Math.sin(angle);
+        float extent = Math.max(2f, half);
+        float arm = Math.max(2f, extent * 0.58f - Math.max(0f, gap) * 0.5f);
+
+        for (int corner = 0; corner < 4; corner++) {
+            float sx = (corner & 1) == 0 ? -1f : 1f;
+            float sy = (corner & 2) == 0 ? -1f : 1f;
+            float outerX = sx * extent;
+            float outerY = sy * extent;
+            float horizontalX = sx * (extent - arm);
+            float verticalY = sy * (extent - arm);
+
+            line(handle, rotateX(outerX, outerY, cos, sin) + x,
+                    rotateY(outerX, outerY, cos, sin) + y,
+                    rotateX(horizontalX, outerY, cos, sin) + x,
+                    rotateY(horizontalX, outerY, cos, sin) + y);
+            line(handle, rotateX(outerX, outerY, cos, sin) + x,
+                    rotateY(outerX, outerY, cos, sin) + y,
+                    rotateX(outerX, verticalY, cos, sin) + x,
+                    rotateY(outerX, verticalY, cos, sin) + y);
+        }
+    }
+
+    private static void drawSharpX(long handle, float x, float y, float half, float gap, boolean reverse) {
+        float inner = Math.max(0f, gap);
+        float outer = Math.max(inner + 0.5f, half);
+        float baseHalf = Math.max(1.2f, outer * 0.10f);
+
+        for (int arm = 0; arm < 4; arm++) {
+            float angle = (float) (Math.PI * 0.25f + arm * Math.PI * 0.5f);
+            float ux = (float) Math.cos(angle);
+            float uy = (float) Math.sin(angle);
+            float px = -uy;
+            float py = ux;
+            float baseRadius = reverse ? outer : inner;
+            float tipRadius = reverse ? inner : outer;
+            float baseX = x + ux * baseRadius;
+            float baseY = y + uy * baseRadius;
+            float tipX = x + ux * tipRadius;
+            float tipY = y + uy * tipRadius;
+
+            nvgMoveTo(handle, baseX + px * baseHalf, baseY + py * baseHalf);
+            nvgLineTo(handle, baseX - px * baseHalf, baseY - py * baseHalf);
+            nvgLineTo(handle, tipX, tipY);
+            nvgClosePath(handle);
+        }
+    }
+
+    private static float rotateX(float x, float y, float cos, float sin) {
+        return x * cos - y * sin;
+    }
+
+    private static float rotateY(float x, float y, float cos, float sin) {
+        return x * sin + y * cos;
     }
 
     private static void drawBloom(long handle, NVGU vg, float half, float strokeWidth, int alpha) {

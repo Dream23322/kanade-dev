@@ -580,7 +580,7 @@ public class NanoVGClickGuiScreen extends Screen {
             if (button == Keys.MOUSE_BUTTON_LEFT) {
                 closeListDropdown();
                 pressedModule = row.module;
-                row.module.toggle();
+                row.module.toggleByUser();
                 return true;
             }
 
@@ -1542,6 +1542,10 @@ public class NanoVGClickGuiScreen extends Screen {
             float labelSize = columnFont(COLUMN_ROW_FONT);
             vg.rectangle(column.header.x, column.header.y, column.header.width, column.header.height,
                     new Color(10, 11, 16, 205));
+            if (!modules.isEmpty()) {
+                NVGFonts.INTER.drawTextBlur(label, column.header.centerX(), column.header.centerY(), labelSize,
+                        NanoVGTheme.text(34), 1.05f, Alignment.CENTER_MIDDLE);
+            }
             NVGFonts.INTER.drawText(label, column.header.centerX(), column.header.centerY(), labelSize,
                     modules.isEmpty() ? NanoVGTheme.dim(150) : NanoVGTheme.text(235),
                     Alignment.CENTER_MIDDLE, true);
@@ -2105,59 +2109,86 @@ public class NanoVGClickGuiScreen extends Screen {
     private void renderTagTabs(NVGU vg, float screenWidth) {
         tagTabBounds.clear();
 
-        float height = u(12f);
-        float gap = u(3f);
-        float width = u(44f);
-        float totalWidth = width * 2f + gap;
-        float startX = (screenWidth - totalWidth) / 2f;
-        float firstRowY = topBarHeight + u(4f);
-        float secondRowY = firstRowY + height + gap;
+        float panelWidth = Math.min(u(140f), screenWidth - u(16f));
+        float panelX = (screenWidth - panelWidth) / 2f;
+        float panelY = topBarHeight + u(3f);
+        float headerHeight = u(12f);
+        float outerPadding = u(4f);
+        float rowHeight = u(16f);
+        float rowGap = u(3f);
+        float rowWidth = panelWidth - outerPadding * 2f;
+        float tabWidth = rowWidth / 2f;
+        float firstRowY = panelY + headerHeight + u(3f);
+        float secondRowY = firstRowY + rowHeight + rowGap;
+        float panelHeight = headerHeight + u(3f) + rowHeight * 2f + rowGap + u(4f);
 
-        float panelPaddingX = u(10f);
-        float panelPaddingTop = u(4f);
-        float panelPaddingBottom = u(6f);
-        float panelHeight = secondRowY + height + panelPaddingBottom - (firstRowY - panelPaddingTop);
-        vg.rectangle(startX - panelPaddingX, firstRowY - panelPaddingTop,
-                totalWidth + panelPaddingX * 2f, panelHeight,
-                new Color(7, 8, 12, 218));
-        vg.rectangleBorder(startX - panelPaddingX, firstRowY - panelPaddingTop,
-                totalWidth + panelPaddingX * 2f, panelHeight, cu(0.7f),
-                alpha(255, 255, 255, 20), Border.INSIDE);
+        vg.beginEffectBatch();
+        vg.blurRoundedRectangle(panelX, panelY, panelWidth, panelHeight, 0f, 10f, 0.92f);
+        vg.flushEffectBatch();
+        vg.rectangle(panelX, panelY, panelWidth, panelHeight, new Color(15, 16, 21, 176));
+        vg.rectangleBorder(panelX, panelY, panelWidth, panelHeight, u(0.6f),
+                alpha(255, 255, 255, 24), Border.INSIDE);
+        vg.rectangle(panelX, panelY + headerHeight, panelWidth, u(0.75f),
+                alpha(255, 255, 255, 22));
+        NVGFonts.INTER_MEDIUM.drawText("Tags", panelX + u(6f), panelY + u(2.5f), font(7f),
+                NanoVGTheme.text(215), Alignment.LEFT_TOP, true);
 
-        drawTagTab(vg, new Rect(startX, firstRowY, width, height), "Classic",
+        Rect firstRow = new Rect(panelX + outerPadding, firstRowY, rowWidth, rowHeight);
+        Rect secondRow = new Rect(panelX + outerPadding, secondRowY, rowWidth, rowHeight);
+        float firstTabX = firstRow.x;
+        float secondTabX = firstTabX + tabWidth;
+        drawTagTab(vg, new Rect(firstTabX, firstRow.y, tabWidth, rowHeight), "Classic",
                 pvpTab == ModuleTags.Pvp.CLASSIC, pvpPins.contains(ModuleTags.Pvp.CLASSIC),
                 ModuleTags.Pvp.CLASSIC, null);
-        drawTagTab(vg, new Rect(startX + width + gap, firstRowY, width, height), "Modern",
+        drawTagTab(vg, new Rect(secondTabX, firstRow.y, tabWidth, rowHeight), "Modern",
                 pvpTab == ModuleTags.Pvp.MODERN, pvpPins.contains(ModuleTags.Pvp.MODERN),
                 ModuleTags.Pvp.MODERN, null);
-        drawTagTab(vg, new Rect(startX, secondRowY, width, height), "Blatant",
+        drawTagTab(vg, new Rect(firstTabX, secondRow.y, tabWidth, rowHeight), "Blatant",
                 visibilityTab == ModuleTags.Visibility.BLATANT,
                 visibilityPins.contains(ModuleTags.Visibility.BLATANT),
                 null, ModuleTags.Visibility.BLATANT);
-        drawTagTab(vg, new Rect(startX + width + gap, secondRowY, width, height), "Ghost",
+        drawTagTab(vg, new Rect(secondTabX, secondRow.y, tabWidth, rowHeight), "Ghost",
                 visibilityTab == ModuleTags.Visibility.GHOST,
                 visibilityPins.contains(ModuleTags.Visibility.GHOST),
                 null, ModuleTags.Visibility.GHOST);
 
-        tagTabsBottom = secondRowY + height + panelPaddingBottom;
+        for (Rect row : new Rect[]{firstRow, secondRow}) {
+            vg.rectangle(row.x, row.y + row.height - u(0.75f), row.width, u(0.75f),
+                    alpha(255, 255, 255, 20));
+            vg.rectangle(row.x + row.width / 2f - u(0.35f), row.y, u(0.7f), row.height,
+                    alpha(255, 255, 255, 14));
+        }
+
+        tagTabsBottom = panelY + panelHeight;
     }
 
     private void drawTagTab(NVGU vg, Rect rect, String label, boolean selected, boolean pinned,
                             ModuleTags.Pvp pvp, ModuleTags.Visibility visibility) {
         boolean hovered = rect.contains(scaledMouseX, scaledMouseY);
-        vg.rectangle(rect.x, rect.y, rect.width, rect.height,
-                selected ? alpha(214, 107, 232, 62)
-                        : hovered ? alpha(255, 255, 255, 26)
-                        : pinned ? alpha(214, 107, 232, 30)
-                        : alpha(255, 255, 255, 10));
-        if (pinned)
-            vg.rectangleBorder(rect.x, rect.y, rect.width, rect.height, cu(0.7f), NanoVGTheme.ACCENT, Border.INSIDE);
-        NVGFonts.INTER.drawText(label, rect.centerX(), rect.y + (rect.height - font(7f)) / 2f, font(7f),
+        Color accent = NanoVGTheme.ACCENT;
+        if (selected)
+            vg.rectangle(rect.x, rect.y, rect.width, rect.height,
+                    alpha(accent.getRed(), accent.getGreen(), accent.getBlue(), 26));
+        else if (pinned)
+            vg.rectangle(rect.x, rect.y, rect.width, rect.height,
+                    alpha(accent.getRed(), accent.getGreen(), accent.getBlue(), 14));
+        if (hovered)
+            vg.rectangle(rect.x, rect.y, rect.width, rect.height, alpha(255, 255, 255, 18));
+        if (selected || pinned) {
+            float barHeight = Math.max(0f, rect.height - u(2f));
+            Color bar = selected ? accent
+                    : alpha(accent.getRed(), accent.getGreen(), accent.getBlue(), 150);
+            vg.rectangle(rect.x, rect.y + u(1f), u(1.5f), barHeight, bar);
+        }
+
+        NVGFont labelFont = selected || pinned ? NVGFonts.INTER_MEDIUM : NVGFonts.INTER;
+        float labelSize = font(7f);
+        labelFont.drawText(label, rect.x + u(7f), rect.y + (rect.height - labelSize) / 2f, labelSize,
                 selected ? NanoVGTheme.ACCENT
-                        : pinned ? NanoVGTheme.text(230)
-                        : hovered ? NanoVGTheme.text(235)
-                        : NanoVGTheme.muted(210),
-                Alignment.CENTER_TOP, true);
+                        : pinned ? NanoVGTheme.text(235)
+                        : hovered ? NanoVGTheme.text(245)
+                        : new Color(177, 177, 190, 235),
+                Alignment.LEFT_TOP, true);
         tagTabBounds.add(new TagTabBounds(rect, pvp, visibility));
     }
 
@@ -4099,7 +4130,7 @@ public class NanoVGClickGuiScreen extends Screen {
                 pressedControl = control;
             }
             case MODULE_ENABLED -> {
-                ((Module) control.target).toggle();
+                ((Module) control.target).toggleByUser();
                 pressedControl = control;
             }
             case MODULE_KEY -> bindingModule = (Module) control.target;

@@ -57,6 +57,13 @@ public final class ChatCommandTree {
                 targets.addAll(playerNames());
                 return SharedSuggestionProvider.suggest(targets, builder);
             };
+    private static final SuggestionProvider<ClientSuggestionProvider> PLAYER_TARGETS =
+            (context, builder) -> {
+                List<String> targets = new ArrayList<>();
+                targets.add("stop");
+                targets.addAll(playerNames());
+                return SharedSuggestionProvider.suggest(targets, builder);
+            };
     private static final SuggestionProvider<ClientSuggestionProvider> TP_Y =
             (context, builder) -> {
                 List<String> values = new ArrayList<>();
@@ -112,6 +119,11 @@ public final class ChatCommandTree {
                 .then(argument("player|x|stop", TokenArgument.token()).suggests(GOTO_TARGETS).executes(NOOP)
                         .then(argument("y|z", TokenArgument.token()).suggests(TP_Y).executes(NOOP)
                                 .then(argument("z", TokenArgument.token()).suggests(TP_Z).executes(NOOP)))));
+
+        commands.register(literal("stalk")
+                .then(argument("player", TokenArgument.token()).suggests(PLAYER_TARGETS).executes(NOOP)));
+        commands.register(literal("dodge")
+                .then(argument("player", TokenArgument.token()).suggests(PLAYER_TARGETS).executes(NOOP)));
 
         commands.register(literal("vclip")
                 .then(argument("height", DoubleArgumentType.doubleArg()).executes(NOOP)));

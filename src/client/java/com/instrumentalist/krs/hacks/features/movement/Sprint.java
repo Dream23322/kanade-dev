@@ -36,10 +36,6 @@ public class Sprint extends Module {
     private static final BooleanValue silentSprint = new BooleanValue("Silent", true)
             .describe("Sends sprint packets without sprinting on your screen.");
 
-    @Setting
-    private static final BooleanValue wallCheck = new BooleanValue("Wall Check", false, autoSprint::get)
-            .describe("Stops sprinting when a wall is directly in front of you.");
-
     private boolean swimming = false;
 
     @Override
@@ -70,6 +66,12 @@ public class Sprint extends Module {
         var player = mc.player;
         if (player == null) return;
 
+        if (shouldStopSprintingOnCollision(player)) {
+            if (player.isSprinting())
+                player.setSprinting(false);
+            return;
+        }
+
         if (shouldAutoSprint(player, player.input.keyPresses) && !player.isSprinting())
             player.setSprinting(true);
     }
@@ -96,6 +98,19 @@ public class Sprint extends Module {
 
     public static boolean shouldSprintOmnidirectional() {
         return ModuleManager.getModuleState(Sprint.class) && autoSprint.get() && multiDirection.get();
+    }
+
+    /**
+     * Automatic sprint has to stop as soon as the player is pushed against a
+     * block, including the minor collisions vanilla deliberately tolerates.
+     * Keeping sprint pressed into a wall causes strict movement checks to see
+     * sprint speed that the server cannot reproduce.
+     */
+    public static boolean shouldStopSprintingOnCollision(LocalPlayer player) {
+        return player != null
+                && ModuleManager.getModuleState(Sprint.class)
+                && autoSprint.get()
+                && player.horizontalCollision;
     }
 
     public static float getOmnidirectionalJumpYaw(float fallbackYaw) {
@@ -136,7 +151,7 @@ public class Sprint extends Module {
             return false;
 
         if (ignoreScaffoldNoSprint) {
-            if (!canStartSprintingLikeVanilla(player, input) || wallCheck.get() && player.horizontalCollision)
+            if (!canStartSprintingLikeVanilla(player, input))
                 return false;
 
             player.setSprinting(true);
@@ -161,14 +176,14 @@ public class Sprint extends Module {
                 && input != null
                 && !Scaffold.shouldSuppressTellyNormalJumpSprintHook()
                 && canStartSprintingLikeVanilla(player, input)
-                && (ignoreScaffoldNoSprint || !ModuleManager.getModuleState(Scaffold.class) || !Scaffold.noSprint.get())
-                && (!wallCheck.get() || !player.horizontalCollision);
+                && !player.horizontalCollision
+                && (ignoreScaffoldNoSprint || !ModuleManager.getModuleState(Scaffold.class) || !Scaffold.noSprint.get());
     }
 
     private static boolean canStartPhysicalSprint(LocalPlayer player, Input input) {
         return input.sprint()
                 && canStartSprintingLikeVanilla(player, input)
-                && (!wallCheck.get() || !player.horizontalCollision);
+                && !player.horizontalCollision;
     }
 
     private static boolean canStartSprintingLikeVanilla(LocalPlayer player, Input input) {

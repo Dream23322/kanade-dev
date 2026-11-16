@@ -17,6 +17,7 @@ import com.instrumentalist.krs.utils.network.ServerLookup;
 import com.instrumentalist.krs.utils.packet.PacketUtil;
 import com.instrumentalist.krs.utils.pathfinder.MainPathFinder;
 import com.instrumentalist.krs.utils.navigation.Navigator;
+import com.instrumentalist.krs.utils.navigation.PlayerQueue;
 import com.instrumentalist.krs.utils.value.*;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -531,6 +532,8 @@ public class ModuleRenderable implements Renderable, IMinecraft {
             showLog(chatMode, "vclip <height> -> teleport up from current position");
             showLog(chatMode, "tp <x> <y> <z> or <player> -> teleport to everywhere");
             showLog(chatMode, "goto <x> <y> <z> / <x> <z> / <player> / stop -> walk, mine and build to the position like a vanilla player");
+            showLog(chatMode, "stalk <player|stop> -> requeue until a player is found, then follow them");
+            showLog(chatMode, "dodge <player|stop> -> requeue whenever that player is in your game");
             showLog(chatMode, "notify <title> <message> -> show custom notification");
             showLog(chatMode, "server <address> -> dump raw IP, vulns, linked servers, and all lookup data");
         } else if (command.equalsIgnoreCase("server") || command.toLowerCase(Locale.ROOT).startsWith("server ")) {
@@ -542,6 +545,10 @@ public class ModuleRenderable implements Renderable, IMinecraft {
             showLog(chatMode, Objects.requireNonNullElse(error, "Looking up server..."));
         } else if (command.equalsIgnoreCase("goto") || command.toLowerCase(Locale.ROOT).startsWith("goto ")) {
             showLog(chatMode, Navigator.command(command.substring(4)));
+        } else if (command.equalsIgnoreCase("stalk") || command.toLowerCase(Locale.ROOT).startsWith("stalk ")) {
+            showLog(chatMode, PlayerQueue.stalk(command.length() > 6 ? command.substring(6).trim() : ""));
+        } else if (command.equalsIgnoreCase("dodge") || command.toLowerCase(Locale.ROOT).startsWith("dodge ")) {
+            showLog(chatMode, PlayerQueue.dodge(command.length() > 6 ? command.substring(6).trim() : ""));
         } else if (command.toLowerCase().startsWith("t " ) || command.toLowerCase().startsWith("toggle " )) {
             String moduleName = "";
 
@@ -552,8 +559,7 @@ public class ModuleRenderable implements Renderable, IMinecraft {
 
             for (Module module : ModuleManager.modules) {
                 if (moduleName.equals(module.moduleName.toLowerCase().replace(" ", ""))) {
-                    module.toggle();
-                    Client.notificationManager.addNotification("Toggle", module.tempEnabled ? "Enabled " + module.moduleName : "Disabled " + module.moduleName);
+                    module.toggleByUser();
                     return;
                 }
             }
@@ -808,7 +814,7 @@ public class ModuleRenderable implements Renderable, IMinecraft {
 
     private void renderModuleSettings(Module module) {
         if (imgui.ImGui.checkbox("Toggle Module##" + module.moduleName, module.tempEnabled)) {
-            module.toggle();
+            module.toggleByUser();
         }
 
         if (imgui.ImGui.checkbox("Show on array##" + module.moduleName, module.showOnArray)) {

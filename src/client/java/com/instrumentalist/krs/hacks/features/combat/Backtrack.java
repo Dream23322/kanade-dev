@@ -3,14 +3,12 @@ package com.instrumentalist.krs.hacks.features.combat;
 import com.instrumentalist.krs.Client;
 import com.instrumentalist.krs.events.features.AttackEvent;
 import com.instrumentalist.krs.events.features.ReceivedPacketEvent;
-import com.instrumentalist.krs.events.features.RenderHudEvent;
 import com.instrumentalist.krs.events.features.Render3DEvent;
+import com.instrumentalist.krs.events.features.RenderHudEvent;
 import com.instrumentalist.krs.events.features.UpdateEvent;
 import com.instrumentalist.krs.events.features.WorldEvent;
 import com.instrumentalist.krs.hacks.Module;
 import com.instrumentalist.krs.hacks.ModuleCategory;
-import com.instrumentalist.krs.utils.entity.EntityExtension;
-import com.instrumentalist.krs.utils.entity.FakePlayerEntity;
 import com.instrumentalist.krs.utils.input.Keys;
 import com.instrumentalist.krs.utils.math.BehaviorUtils;
 import com.instrumentalist.krs.utils.math.MSTimer;
@@ -27,15 +25,22 @@ import com.instrumentalist.krs.utils.value.IntValue;
 import com.instrumentalist.krs.utils.value.ListValue;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.common.ClientboundDisconnectPacket;
+import net.minecraft.network.protocol.game.ClientboundDisguisedChatPacket;
 import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
+import net.minecraft.network.protocol.game.ClientboundLoginPacket;
 import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
+import net.minecraft.network.protocol.game.ClientboundRespawnPacket;
 import net.minecraft.network.protocol.game.ClientboundSetHealthPacket;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.network.protocol.game.ClientboundSystemChatPacket;
+import net.minecraft.network.protocol.game.ServerboundChatCommandPacket;
+import net.minecraft.network.protocol.game.ServerboundChatPacket;
 import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
 import net.minecraft.network.protocol.game.VecDeltaCodec;
+import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -44,8 +49,10 @@ import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Port of LiquidBounce's Backtrack: incoming position packets of the tracked target are held back
- * so the target is shown (and hit) where it was a moment ago, buying extra reach.
+ * Port of LiquidBounce's Backtrack.
+ *
+ * <p>Incoming target position packets are queued through a {@link VecDeltaCodec} base that starts
+ * at the target's server position, exactly like LiquidBounce's {@code TrackedEntityPosition}.</p>
  */
 public class Backtrack extends Module {
     private static final int MAX_STORED_PACKETS = 512;
@@ -66,6 +73,12 @@ public class Backtrack extends Module {
             "Render",
             true
     ).describe("Draws a theme-coloured box around the backtracked target.");
+
+    @Setting
+    private final BooleanValue walls = new BooleanValue(
+            "Walls",
+            true
+    ).describe("Draws filled target-box walls without the glowing outline.");
 
     @Setting
     private final FloatValue minRange = new FloatValue(
@@ -166,17 +179,14 @@ public class Backtrack extends Module {
 
     private final ArrayDeque<QueuedPacket> storage = new ArrayDeque<>();
     private final Object storageLock = new Object();
-    private final VecDeltaCodec simulatedPositionCodec = new VecDeltaCodec();
+    private final VecDeltaCodec trackedPositionCodec = new VecDeltaCodec();
     private final MSTimer trackingBufferTimer = new MSTimer();
     private final MSTimer attackTimer = new MSTimer();
     private final ArrayList<Vec3> lineScratch = new ArrayList<>(1);
 
     private Entity target;
     private Vec3 trackedPosition;
-    private Vec3 simulatedPosition;
-    private Vec3 simulatedDeltaMovement = Vec3.ZERO;
-    private float simulatedYaw;
-    private float simulatedPitch;
+    private boolean shouldPause;
     private boolean chancePassed = true;
     private int currentDelay = 100;
     private long nextBacktrackReadyNanos;
@@ -201,7 +211,6 @@ public class Backtrack extends Module {
 
     @Override
     public void onEnable() {
-        chancePassed = true;
         currentDelay = rollDelay();
         nextBacktrackReadyNanos = 0L;
         clear(false, false);
@@ -210,7 +219,7 @@ public class Backtrack extends Module {
     @Override
     public void onDisable() {
         clear(true, true);
-        resetSimulation();
+        shouldPause = false;
         ServerPositionTracker.reset();
         PathLines.hide(this, TARGET_LINE);
         PathLines.hide(this, SELF_LINE);
@@ -220,7 +229,6 @@ public class Backtrack extends Module {
     public void onWorld(WorldEvent event) {
         dropQueue();
         clear(false, false);
-        resetSimulation();
         ServerPositionTracker.reset();
         PathLines.hide(this, TARGET_LINE);
         PathLines.hide(this, SELF_LINE);
@@ -228,17 +236,12 @@ public class Backtrack extends Module {
 
     @Override
     public void onAttack(AttackEvent event) {
-        Entity attacked = event.entity;
-        if (attacked == null || mc.player == null || attacked == mc.player)
-            return;
-        if (!(attacked instanceof LivingEntity) || attacked instanceof FakePlayerEntity)
-            return;
-
+        // LiquidBounce updates the last-attack timer and rolls the chance for every attack.
         attackTimer.reset();
         chancePassed = RandomUtil.nextFloat(0f, 100f) < chance.get();
 
         if (!isRangeMode())
-            processTarget(attacked);
+            processTarget(event.entity);
     }
 
     @Override
@@ -250,7 +253,7 @@ public class Backtrack extends Module {
         }
 
         if (isRangeMode()) {
-            Entity enemy = BehaviorUtils.findEnemy(effectiveMaxRange());
+            Entity enemy = BehaviorUtils.findEnemy(minRange.get(), effectiveMaxRange());
             if (enemy == null) {
                 if (target != null)
                     clear(true, true);
@@ -264,74 +267,72 @@ public class Backtrack extends Module {
 
     @Override
     public void onReceivedPacket(ReceivedPacketEvent event) {
-        if (event == null || event.packet == null || mc.player == null || mc.level == null)
+        if (event == null || event.packet == null || event.isCancelled() || mc.player == null || mc.level == null)
+            return;
+
+        boolean shouldCancel = shouldCancelPackets();
+        boolean hadQueuedIncoming = hasQueuedPackets();
+
+        // If we should not lag and there is nothing queued, BlinkManager is not involved at all.
+        if (!hadQueuedIncoming && !shouldCancel)
             return;
 
         Packet<?> packet = event.packet;
 
-        // Teleports, disconnects and our own death invalidate the held positions.
+        // Ignore message-related packets.
+        if (packet instanceof ServerboundChatPacket
+                || packet instanceof ClientboundSystemChatPacket
+                || packet instanceof ClientboundDisguisedChatPacket
+                || packet instanceof ServerboundChatCommandPacket)
+            return;
+
+        // Flush on teleport or disconnect.
         if (packet instanceof ClientboundPlayerPositionPacket
-                || packet instanceof ClientboundDisconnectPacket
-                || packet instanceof ClientboundSetHealthPacket health && health.getHealth() <= 0.0F) {
+                || packet instanceof ClientboundDisconnectPacket) {
             clear(true, true);
             return;
         }
 
-        if (!queueing() && !hasQueuedPackets())
+        // BlinkManager flushes on reconnect/respawn, but keeps the current target.
+        if (packet instanceof ClientboundRespawnPacket || packet instanceof ClientboundLoginPacket) {
+            releaseAll();
             return;
+        }
+
+        // Ignore own hurt sounds.
+        if (packet instanceof ClientboundSoundPacket soundPacket
+                && soundPacket.getSound().value() == SoundEvents.PLAYER_HURT)
+            return;
+
+        // Flush on own death.
+        if (packet instanceof ClientboundSetHealthPacket healthPacket && healthPacket.getHealth() <= 0.0F) {
+            clear(true, true);
+            return;
+        }
 
         Entity current = target;
         if (current == null)
             return;
 
-        Vec3 position;
-        try {
-            if (packet instanceof ClientboundMoveEntityPacket movePacket) {
-                if (movePacket.getEntity(mc.level) != current)
-                    return;
-                ensureSimulationInitialized(current);
-                position = simulateMovePacket(current, movePacket);
-            } else if (packet instanceof ClientboundTeleportEntityPacket teleportPacket) {
-                if (mc.level.getEntity(teleportPacket.id()) != current)
-                    return;
-                ensureSimulationInitialized(current);
-                PositionMoveRotation absolute = PositionMoveRotation.calculateAbsolute(
-                        new PositionMoveRotation(simulatedPosition, simulatedDeltaMovement, simulatedYaw, simulatedPitch),
-                        teleportPacket.change(),
-                        teleportPacket.relatives());
-                updateSimulation(absolute.position(), absolute.deltaMovement(), absolute.yRot(), absolute.xRot());
-                position = absolute.position();
-            } else if (packet instanceof ClientboundEntityPositionSyncPacket syncPacket) {
-                if (mc.level.getEntity(syncPacket.id()) != current)
-                    return;
-                // Position sync packets no longer carry a velocity since 26.3, so keep the simulated one.
-                position = syncPacket.position().endPosition();
-                updateSimulation(position, simulatedDeltaMovement, syncPacket.yRot(), syncPacket.xRot());
-            } else {
+        Vec3 position = handleTrackedPacket(packet, current);
+        if (position != null) {
+            // Is the target's actual position closer than its tracked position?
+            if (squareBoxedDistanceTo(current, position, mc.player) < boxedDistanceSquared(current, mc.player)) {
+                // Process all packets. We want to hit the enemy, not the opposite.
+                releaseAll();
                 return;
             }
-        } catch (RuntimeException ignored) {
-            clear(true, true);
-            return;
         }
 
-        trackedPosition = position;
-
-        // We want to be able to hit the enemy, not the opposite.
-        if (!queueing() || isTrackedPositionCloser(current, position)) {
-            releaseAll();
-            return;
-        }
+        // There was already a queue or backtracking just became active.
+        event.cancel();
 
         boolean overflow;
         synchronized (storageLock) {
+            if (storage.isEmpty())
+                currentDelay = rollDelay();
+            storage.addLast(new QueuedPacket(packet, System.nanoTime()));
             overflow = storage.size() >= MAX_STORED_PACKETS;
-            if (!overflow) {
-                if (storage.isEmpty())
-                    currentDelay = rollDelay();
-                event.cancel();
-                storage.addLast(new QueuedPacket(packet, System.nanoTime()));
-            }
         }
 
         // Applying the backlog first keeps the target's position sequence in order.
@@ -370,7 +371,7 @@ public class Backtrack extends Module {
         if (position == null)
             return;
 
-        Client.nanoVgManager.loadWorldAnchored(vg -> TargetBoxRenderer.render(current, position, vg));
+        Client.nanoVgManager.loadWorldAnchored(vg -> TargetBoxRenderer.render(current, position, vg, walls.get()));
     }
 
     private void showLine(Object key, Vec3 from, Vec3 to) {
@@ -390,22 +391,29 @@ public class Backtrack extends Module {
     private void processTarget(Entity enemy) {
         if (enemy == null || mc.player == null || enemy == mc.player)
             return;
-        if (!enemy.isAlive() || enemy.isRemoved() || !enemy.isAttackable() || enemy instanceof FakePlayerEntity)
+
+        // LiquidBounce stores this only while processing a target, not on every predicate call.
+        shouldPause = enemy instanceof LivingEntity living && living.hurtTime >= hurtTime.get();
+
+        if (!shouldBacktrack(enemy))
             return;
 
-        // Reset on enemy change, so the tracked position starts from the new target.
+        // Reset on enemy change.
         if (enemy != target) {
             releaseAll();
             clear(false, false);
-            initializeSimulation(enemy);
+
+            // Instantly set the new position, so the box is not created with delay.
+            trackedPositionCodec.setBase(enemy.getPositionCodec().getBase());
+            trackedPosition = trackedPositionCodec.getBase();
         }
 
         target = enemy;
     }
 
-    private boolean queueing() {
+    private boolean shouldCancelPackets() {
         Entity current = target;
-        return tempEnabled && current != null && shouldBacktrack(current);
+        return tempEnabled && current != null && current.isAlive() && shouldBacktrack(current);
     }
 
     private boolean shouldBacktrack(Entity candidate) {
@@ -413,8 +421,10 @@ public class Backtrack extends Module {
             return false;
         if (!candidate.isAlive() || candidate.isRemoved() || !candidate.isAttackable())
             return false;
+        if (!mc.level.getWorldBorder().isWithinBounds(candidate.blockPosition()))
+            return false;
 
-        double distance = EntityExtension.boxedDistanceTo(candidate, mc.player);
+        double distance = Math.sqrt(boxedDistanceSquared(candidate, mc.player));
         double min = Math.min(minRange.get(), maxRange.get());
         double max = Math.max(minRange.get(), maxRange.get());
         boolean inRange = distance >= min && distance <= max;
@@ -422,39 +432,58 @@ public class Backtrack extends Module {
         if (inRange)
             trackingBufferTimer.reset();
 
-        if (!inRange && trackingBufferTimer.hasTimePassed(trackingBuffer.get()))
-            return false;
-
-        return mc.player.tickCount > MIN_TARGET_TICKS
+        return (inRange || !trackingBufferTimer.hasTimePassed(trackingBuffer.get()))
+                && mc.player.tickCount > MIN_TARGET_TICKS
                 && chancePassed
                 && System.nanoTime() >= nextBacktrackReadyNanos
-                && !isPaused(candidate)
+                && !isPaused()
                 && !attackTimer.hasTimePassed(lastAttackTimeToWork.get());
     }
 
-    private boolean isPaused(Entity candidate) {
-        if (!pauseOnHurtTime.get())
-            return false;
+    private boolean isPaused() {
+        return pauseOnHurtTime.get() && shouldPause;
+    }
 
-        return candidate instanceof LivingEntity living && living.hurtTime >= hurtTime.get();
+    /**
+     * Mirrors LiquidBounce's TrackedEntityPosition: movement deltas are decoded against a codec
+     * whose base starts at the target's server position.
+     */
+    private Vec3 handleTrackedPacket(Packet<?> packet, Entity current) {
+        Vec3 trackedPos;
+
+        if (packet instanceof ClientboundMoveEntityPacket movePacket) {
+            if (mc.level == null || movePacket.getEntity(mc.level) != current)
+                return null;
+            trackedPos = movePacket.getPositionDelta().decode(trackedPositionCodec).endPosition();
+        } else if (packet instanceof ClientboundTeleportEntityPacket teleportPacket) {
+            if (teleportPacket.id() != current.getId())
+                return null;
+            trackedPos = teleportPacket.change().position();
+        } else if (packet instanceof ClientboundEntityPositionSyncPacket syncPacket) {
+            if (syncPacket.id() != current.getId())
+                return null;
+            trackedPos = syncPacket.position().endPosition();
+        } else {
+            return null;
+        }
+
+        trackedPositionCodec.setBase(trackedPos);
+        trackedPosition = trackedPos;
+        return trackedPos;
     }
 
     private void tickQueue() {
-        boolean hadQueuedPackets = hasQueuedPackets();
+        boolean hadQueuedIncoming = hasQueuedPackets();
 
-        if (queueing()) {
+        if (shouldCancelPackets()) {
             flushExpired();
-        } else if (hadQueuedPackets) {
+        } else if (hadQueuedIncoming) {
             releaseAll();
-            clear(true, true);
+            clear(false, true);
         }
-    }
 
-    private boolean isTrackedPositionCloser(Entity entity, Vec3 position) {
-        Vec3 eye = mc.player.getEyePosition();
-        double trackedDistance = makeBoundingBox(entity, position).distanceToSqr(eye);
-        double shownDistance = entity.getBoundingBox().distanceToSqr(eye);
-        return trackedDistance < shownDistance;
+        if (!hasQueuedPackets())
+            currentDelay = rollDelay();
     }
 
     private boolean hasQueuedPackets() {
@@ -464,7 +493,8 @@ public class Backtrack extends Module {
     }
 
     private void flushExpired() {
-        long cutoff = System.nanoTime() - TimeUnit.MILLISECONDS.toNanos(Math.clamp(currentDelay, 0, 2000));
+        long now = System.nanoTime();
+        long cutoff = now - TimeUnit.MILLISECONDS.toNanos(Math.clamp(currentDelay, 0, 2000));
         ArrayDeque<Packet<?>> due = null;
 
         synchronized (storageLock) {
@@ -501,8 +531,8 @@ public class Backtrack extends Module {
         }
     }
 
-    private void clear(boolean flushPackets, boolean resetCooldown) {
-        if (flushPackets)
+    private void clear(boolean releasePackets, boolean resetCooldown) {
+        if (releasePackets)
             releaseAll();
 
         if (target != null && resetCooldown)
@@ -512,11 +542,26 @@ public class Backtrack extends Module {
         trackedPosition = null;
     }
 
-    private void resetSimulation() {
-        simulatedPosition = null;
-        simulatedDeltaMovement = Vec3.ZERO;
-        simulatedYaw = 0.0F;
-        simulatedPitch = 0.0F;
+    /**
+     * Mirrors LiquidBounce's {@code Entity.boxedDistanceTo}: the target's pick box against the
+     * player's eye position.
+     */
+    private double boxedDistanceSquared(Entity entity, Entity other) {
+        return pickBoxAt(entity, entity.position()).distanceToSqr(other.getEyePosition());
+    }
+
+    /**
+     * Mirrors LiquidBounce's {@code squareBoxedDistanceTo}: the target's pick box moved to a
+     * different position, against the player's eye position.
+     */
+    private double squareBoxedDistanceTo(Entity entity, Vec3 position, Entity other) {
+        return pickBoxAt(entity, position).distanceToSqr(other.getEyePosition());
+    }
+
+    private AABB pickBoxAt(Entity entity, Vec3 position) {
+        return entity.getBoundingBox()
+                .inflate(entity.getPickRadius())
+                .move(position.subtract(entity.position()));
     }
 
     private int rollDelay() {
@@ -529,61 +574,6 @@ public class Backtrack extends Module {
         int min = Math.min(minNextBacktrackDelay.get(), maxNextBacktrackDelay.get());
         int max = Math.max(minNextBacktrackDelay.get(), maxNextBacktrackDelay.get());
         return RandomUtil.nextInt(min, max + 1);
-    }
-
-    private void ensureSimulationInitialized(Entity entity) {
-        if (simulatedPosition == null)
-            initializeSimulation(entity);
-    }
-
-    private void initializeSimulation(Entity entity) {
-        Vec3 base = entity.getPositionCodec().getBase();
-        if (base == null)
-            base = entity.position();
-
-        simulatedPositionCodec.setBase(base);
-        simulatedPosition = entity.position();
-        simulatedDeltaMovement = entity.getDeltaMovement();
-        simulatedYaw = entity.getYRot();
-        simulatedPitch = entity.getXRot();
-        trackedPosition = simulatedPosition;
-    }
-
-    private Vec3 simulateMovePacket(Entity entity, ClientboundMoveEntityPacket packet) {
-        Vec3 position = simulatedPosition != null ? simulatedPosition : entity.position();
-
-        if (packet.hasPosition()) {
-            position = packet.getPositionDelta().decode(simulatedPositionCodec).endPosition();
-            simulatedPositionCodec.setBase(position);
-            simulatedPosition = position;
-        }
-
-        if (packet.hasRotation()) {
-            simulatedYaw = packet.getYRot();
-            simulatedPitch = packet.getXRot();
-        }
-
-        return position;
-    }
-
-    private void updateSimulation(Vec3 position, Vec3 deltaMovement, float yaw, float pitch) {
-        simulatedPosition = position;
-        simulatedDeltaMovement = deltaMovement;
-        simulatedYaw = yaw;
-        simulatedPitch = pitch;
-        simulatedPositionCodec.setBase(position);
-    }
-
-    private AABB makeBoundingBox(Entity entity, Vec3 position) {
-        double halfWidth = entity.getBbWidth() / 2.0D;
-        return new AABB(
-                position.x - halfWidth,
-                position.y - 0.1D,
-                position.z - halfWidth,
-                position.x + halfWidth,
-                position.y + entity.getBbHeight() + 0.1D,
-                position.z + halfWidth
-        );
     }
 
     private record QueuedPacket(Packet<?> packet, long timestampNanos) {

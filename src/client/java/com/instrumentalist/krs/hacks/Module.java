@@ -77,6 +77,24 @@ public abstract class Module implements EventListener {
         }
     }
 
+    /** Toggles from a keybind or GUI action, optionally reporting the new state. */
+    public synchronized void toggleByUser() {
+        if (disposing) return;
+
+        boolean wasEnabled = tempEnabled;
+        toggle();
+        if (wasEnabled == tempEnabled
+                || !Interface.notifications.get()
+                || !Interface.notificationModuleToggle.get()
+                || Client.notificationManager == null)
+            return;
+
+        Client.notificationManager.addNotification(
+                "Toggle",
+                (tempEnabled ? "Enabled " : "Disabled ") + moduleName
+        );
+    }
+
     final synchronized void activateInitialState() {
         if (!tempEnabled)
             return;

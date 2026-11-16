@@ -13,6 +13,7 @@ import com.instrumentalist.krs.utils.math.TimerUtil;
 import com.instrumentalist.krs.hacks.features.player.Freecam;
 import com.instrumentalist.krs.hacks.features.exploit.Blink;
 import com.instrumentalist.krs.hacks.features.exploit.disabler.DisablerModule;
+import com.instrumentalist.krs.hacks.features.player.LegitScaffold;
 import com.instrumentalist.krs.hacks.features.player.LookTP;
 import com.instrumentalist.krs.hacks.features.player.MurdererDetector;
 import com.instrumentalist.krs.hacks.features.player.Scaffold;
@@ -102,6 +103,7 @@ public class Interface extends Module {
     private static final float CHAT_INPUT_TOP_OFFSET = 14f;
     private static final float INFO_HUD_ICON_GAP = 4f;
     private static final Color MODULE_LIST_TEXT_NEUTRAL = new Color(190, 193, 203);
+    private static final Color MODULE_LIST_TAG_NEUTRAL = new Color(150, 153, 163);
     private static final Color MODULE_LIST_EDGE_NEUTRAL = new Color(205, 209, 220);
     private static final float MODULE_LIST_HORIZONTAL_GRADIENT_SPAN = 220f;
     private static final float MODULE_LIST_ACCENT_WIDTH = 0.75f;
@@ -193,6 +195,12 @@ public class Interface extends Module {
     ).describe("Shows client notifications.");
 
     @Setting
+    public static final BooleanValue notificationModuleToggle = new BooleanValue(
+            "Module Toggle Notifications",
+            true
+    ).describe("Shows a notification when you toggle a module yourself.");
+
+    @Setting
     public static final ListValue notificationCorner = new ListValue(
             "Notification Corner",
             new String[]{"Top Right", "Bottom Right", "Top Left", "Bottom Left"},
@@ -264,6 +272,24 @@ public class Interface extends Module {
             "Scaffold Blocks",
             true
     ).describe("Shows how many blocks scaffold has left.");
+
+    @Setting
+    private static final ListValue scaffoldStyle = new ListValue(
+            "Scaffold Style",
+            new String[]{"Default", "Minimal", "Pill", "Bar"},
+            "Default",
+            () -> scaffoldBlocks.get()
+    ).describe("Style of the scaffold block counter.");
+
+    @Setting
+    private static final FloatValue scaffoldScale = new FloatValue(
+            "Scaffold Scale",
+            1f,
+            0.5f,
+            2f,
+            "x",
+            () -> scaffoldBlocks.get()
+    ).describe("Size of the scaffold block counter.");
 
     @Setting
     private static final BooleanValue miniMap = new BooleanValue(
@@ -369,13 +395,22 @@ public class Interface extends Module {
     private static final BooleanValue moduleListGradient = new BooleanValue(
             "Module List Gradient",
             true
-    ).describe("Blends the theme accent across each module list row.");
+    ).describe("Blends the theme accent diagonally across the whole module list.");
 
     @Setting
     private static final BooleanValue moduleListWaveGradient = new BooleanValue(
             "Module List Wave Gradient",
             false
-    ).describe("Animates the module list accent gradient as a moving wave.");
+    ).describe("Animates the diagonal module list accent gradient as a moving wave.");
+
+    @Setting
+    private static final FloatValue moduleListWaveSpeed = new FloatValue(
+            "Module List Wave Speed",
+            1f,
+            0f,
+            4f,
+            "x"
+    ).describe("Speed multiplier for the module list wave gradient.");
 
     @Setting
     private static final FloatValue moduleListSpacing = new FloatValue(
@@ -2046,7 +2081,7 @@ public class Interface extends Module {
             entries.add(new StyledTextRenderEntry("Blinking... " + (Blink.directions.get().equalsIgnoreCase("incoming") ? "(Incoming)" : "(x" + BlinkUtil.INSTANCE.getPacketCount() + ")"), centerX, startY, progress));
         if (blinking) startY -= 40f;
 
-        boolean scaffoldActive = ModuleManager.getModuleState(Scaffold.class) && mc.player != null;
+        boolean scaffoldActive = (ModuleManager.getModuleState(Scaffold.class) || ModuleManager.getModuleState(LegitScaffold.class)) && mc.player != null;
         progress = advanceModuleInformationFade(INFO_SCAFFOLD_BLOCKS, scaffoldActive, deltaSpeed);
         if (progress > 0f && !scaffoldBlocks.get()) {
             int scaffoldBlockCount = mc.player != null ? Scaffold.countUsableHotbarBlocks(mc.player.getInventory()) : 0;
@@ -3192,7 +3227,8 @@ public class Interface extends Module {
     private static void renderModuleListEffects(NVGU vg, List<ModuleListRenderEntry> renderEntries) {
     }
 
-    private void renderModuleListRowBackgrounds(NVGU vg, List<ModuleListRenderEntry> renderEntries) {
+    private void renderModuleListRowBackgrounds(NVGU vg, List<ModuleListRenderEntry> renderEntries,
+                                                ModuleListGradient gradient) {
         boolean background = moduleListBackground.get();
         boolean accentBar = moduleListAccentBar.get();
         if (!background && !accentBar) return;
@@ -3215,18 +3251,14 @@ public class Interface extends Module {
 
             if (accentBar) {
                 float barWidth = Math.min(MODULE_LIST_ACCENT_WIDTH, entry.width);
-                Color color = moduleListOutlineColor((int) (alpha * 0.60f));
-                vg.rectangle(entry.right() - barWidth, entry.y, barWidth, entry.height, color);
+                fillModuleListGradientRect(vg, entry.right() - barWidth, entry.y, barWidth, entry.height,
+                        gradient, (int) (alpha * 0.60f));
             }
         }
     }
 
-    private static Color moduleListOutlineColor(int alpha) {
-        Color color = NanoVGTheme.blend(NanoVGTheme.ACCENT, MODULE_LIST_EDGE_NEUTRAL, 0.70f);
-        return alphaColor(color.getRed(), color.getGreen(), color.getBlue(), alpha);
-    }
-
-    private static void renderModuleListSteppedOutline(NVGU vg, List<ModuleListRenderEntry> entries) {
+    private static void renderModuleListSteppedOutline(NVGU vg, List<ModuleListRenderEntry> entries,
+                                                       ModuleListGradient gradient) {
         float line = Math.max(0f, moduleListOutlineThickness.get());
         if (line <= 0.01f)
             return;
@@ -3235,68 +3267,137 @@ public class Interface extends Module {
             ModuleListRenderEntry entry = entries.get(i);
             if (entry.width <= 0f || entry.height <= 0f || entry.alpha <= 0)
                 continue;
-            Color color = moduleListOutlineColor((int) (entry.alpha * 0.56f));
-            vg.rectangle(entry.x, entry.y, line, entry.height, color);
-            vg.rectangle(entry.right() - line, entry.y, line, entry.height, color);
+            int alpha = (int) (entry.alpha * 0.56f);
+            fillModuleListGradientRect(vg, entry.x, entry.y, line, entry.height, gradient, alpha);
+            fillModuleListGradientRect(vg, entry.right() - line, entry.y, line, entry.height, gradient, alpha);
             if (i == 0)
-                vg.rectangle(entry.x, entry.y, entry.width, line, color);
+                fillModuleListGradientRect(vg, entry.x, entry.y, entry.width, line, gradient, alpha);
             if (i + 1 == entries.size()) {
-                vg.rectangle(entry.x, entry.y + entry.height - line, entry.width, line, color);
+                fillModuleListGradientRect(vg, entry.x, entry.y + entry.height - line,
+                        entry.width, line, gradient, alpha);
             } else {
                 ModuleListRenderEntry next = entries.get(i + 1);
                 float x = Math.min(entry.x, next.x);
                 float width = Math.abs(next.x - entry.x);
                 if (width > 0.01f) {
-                    Color stepColor = moduleListOutlineColor((int) (Math.min(entry.alpha, next.alpha) * 0.56f));
-                    vg.rectangle(x, entry.y + entry.height - line / 2f, width, line, stepColor);
+                    fillModuleListGradientRect(vg, x, entry.y + entry.height - line / 2f,
+                            width, line, gradient, (int) (Math.min(entry.alpha, next.alpha) * 0.56f));
                 }
             }
         }
     }
 
-    private static final class ModuleListGlyphColour implements NVGU.GlyphColour {
-        private static final float WAVE_SPEED = 0.0012f;
-        private static final float WAVE_ROW_PHASE = 0.28f;
+    private static void fillModuleListGradientRect(NVGU vg, float x, float y, float width, float height,
+                                                   ModuleListGradient gradient, int alpha) {
+        if (width <= 0f || height <= 0f || alpha <= 0) return;
 
-        private int alpha;
-        private float rowLeft;
-        private float rowTop;
-        private float rowWidth = 1f;
+        Color start = gradient.outlineColor(x, y, alpha);
+        Color end = gradient.outlineColor(x + width, y + height, alpha);
+        vg.rectangle(x, y, width, height,
+                vg.linearGradient(x, y, width, height, Math.max(1f, Math.max(width, height)),
+                        start, end, LinearGradientDirection.DIAGONAL_LEFT_TO_RIGHT_DOWN));
+    }
+
+    private static final class ModuleListGradient {
+        private static final double WAVE_SPEED = 0.0012;
+        private static final float WAVE_AMPLITUDE = 0.28f;
+
+        private float minX;
+        private float minY;
+        private float width = 1f;
+        private float height = 1f;
         private long timeMillis;
         private boolean gradient;
-        private boolean waveGradient;
+        private boolean wave;
+        private float speed;
 
-        private void update(ModuleListRenderEntry entry) {
-            this.alpha = entry.alpha;
-            this.rowLeft = entry.x;
-            this.rowTop = entry.y;
-            this.rowWidth = Math.max(1f, entry.width);
-            this.timeMillis = entry.colorTimeMillis;
-            this.gradient = moduleListGradient.get();
-            this.waveGradient = moduleListWaveGradient.get();
+        private void update(List<ModuleListRenderEntry> entries) {
+            float nextMinX = Float.POSITIVE_INFINITY;
+            float nextMinY = Float.POSITIVE_INFINITY;
+            float nextMaxX = Float.NEGATIVE_INFINITY;
+            float nextMaxY = Float.NEGATIVE_INFINITY;
+            for (ModuleListRenderEntry entry : entries) {
+                nextMinX = Math.min(nextMinX, entry.x);
+                nextMinY = Math.min(nextMinY, entry.y);
+                nextMaxX = Math.max(nextMaxX, entry.x + entry.width);
+                nextMaxY = Math.max(nextMaxY, entry.y + entry.height);
+            }
+            if (Float.isFinite(nextMinX) && Float.isFinite(nextMinY)) {
+                minX = nextMinX;
+                minY = nextMinY;
+                width = Math.max(1f, nextMaxX - nextMinX);
+                height = Math.max(1f, nextMaxY - nextMinY);
+            }
+            timeMillis = entries.isEmpty() ? System.currentTimeMillis() : entries.get(0).colorTimeMillis;
+            gradient = moduleListGradient.get();
+            wave = moduleListWaveGradient.get();
+            speed = Math.max(0f, moduleListWaveSpeed.get());
         }
 
-        @Override
-        public Color colourAt(float glyphCenterX) {
-            float progress = Math.clamp((glyphCenterX - rowLeft) / rowWidth, 0f, 1f);
-            Color accent;
-            if (waveGradient) {
-                float phase = (float) ((timeMillis * (double) WAVE_SPEED) % (Math.PI * 2.0))
-                        + rowTop * WAVE_ROW_PHASE;
-                float wave = 0.5f + 0.5f * (float) Math.sin(progress * Math.PI * 2f + phase);
-                accent = NanoVGTheme.blend(NanoVGTheme.ACCENT, NanoVGTheme.ACCENT_END, wave);
-            } else if (gradient) {
-                accent = NanoVGTheme.blend(NanoVGTheme.ACCENT, NanoVGTheme.ACCENT_END, progress);
-            } else {
-                accent = NanoVGTheme.ACCENT;
+        private float progress(float x, float y) {
+            return Math.clamp(((x - minX) + (y - minY)) / (width + height), 0f, 1f);
+        }
+
+        private Color accentAt(float x, float y) {
+            float progress = progress(x, y);
+            if (wave) {
+                float phase = (float) ((timeMillis % 60_000L) * WAVE_SPEED * speed);
+                float waveProgress = Math.clamp(progress
+                        + WAVE_AMPLITUDE * (float) Math.sin(progress * Math.PI * 2f + phase), 0f, 1f);
+                return NanoVGTheme.blend(NanoVGTheme.ACCENT, NanoVGTheme.ACCENT_END, waveProgress);
             }
-            // Keep the chosen theme, but soften the colour like the reference.
+            if (gradient)
+                return NanoVGTheme.blend(NanoVGTheme.ACCENT, NanoVGTheme.ACCENT_END, progress);
+            return NanoVGTheme.ACCENT;
+        }
+
+        private Color textColor(float x, float y, int alpha) {
+            Color accent = accentAt(x, y);
             Color muted = NanoVGTheme.blend(accent, MODULE_LIST_TEXT_NEUTRAL, 0.68f);
+            return new Color(muted.getRed(), muted.getGreen(), muted.getBlue(), Math.clamp(alpha, 0, 255));
+        }
+
+        private Color outlineColor(float x, float y, int alpha) {
+            Color accent = accentAt(x, y);
+            float neutralMix = gradient || wave ? 0.55f : 0.70f;
+            Color muted = NanoVGTheme.blend(accent, MODULE_LIST_EDGE_NEUTRAL, neutralMix);
             return new Color(muted.getRed(), muted.getGreen(), muted.getBlue(), Math.clamp(alpha, 0, 255));
         }
     }
 
+    private static final class ModuleListGlyphColour implements NVGU.GlyphColour {
+        private int alpha;
+        private float rowCenterY;
+        private ModuleListGradient gradient;
+
+        private void update(ModuleListRenderEntry entry, ModuleListGradient gradient) {
+            this.alpha = entry.alpha;
+            this.rowCenterY = entry.y + entry.height * 0.5f;
+            this.gradient = gradient;
+        }
+
+        @Override
+        public Color colourAt(float glyphCenterX) {
+            return gradient.textColor(glyphCenterX, rowCenterY, alpha);
+        }
+    }
+
+    private static final class ModuleListTagColour implements NVGU.GlyphColour {
+        private int alpha;
+
+        private void update(ModuleListRenderEntry entry) {
+            this.alpha = entry.alpha;
+        }
+
+        @Override
+        public Color colourAt(float glyphCenterX) {
+            return new Color(MODULE_LIST_TAG_NEUTRAL.getRed(), MODULE_LIST_TAG_NEUTRAL.getGreen(),
+                    MODULE_LIST_TAG_NEUTRAL.getBlue(), Math.clamp(alpha, 0, 255));
+        }
+    }
+
     private final ModuleListGlyphColour moduleListGlyphColour = new ModuleListGlyphColour();
+    private final ModuleListTagColour moduleListTagColour = new ModuleListTagColour();
 
     private static final class WatermarkGlyphColour implements NVGU.GlyphColour {
         private long timeMillis;
@@ -3354,12 +3455,15 @@ public class Interface extends Module {
         if (Float.isFinite(minX) && Float.isFinite(minY))
             HudEditor.register(HudEditor.Element.MODULE_LIST, minX, minY, maxX - minX, maxY - minY);
 
-        renderModuleListRowBackgrounds(vg, renderEntries);
+        ModuleListGradient gradient = new ModuleListGradient();
+        gradient.update(renderEntries);
+
+        renderModuleListRowBackgrounds(vg, renderEntries, gradient);
 
         if (moduleListOutline.get())
-            renderModuleListSteppedOutline(vg, renderEntries);
+            renderModuleListSteppedOutline(vg, renderEntries, gradient);
 
-        if (renderModuleListGlyphBatch(vg, renderEntries))
+        if (renderModuleListGlyphBatch(vg, renderEntries, gradient))
             return;
 
         for (ModuleListRenderEntry entry : renderEntries) {
@@ -3368,13 +3472,14 @@ public class Interface extends Module {
             if (clipAnimatedEntry)
                 vg.pushScissor(entry.x, entry.y, entry.width, entry.height);
             try {
-                moduleListGlyphColour.update(entry);
+                moduleListGlyphColour.update(entry, gradient);
                 NVGFonts.INTER.drawGradientText(entry.entry.text, entry.textX, entry.textY, MODULE_LIST_FONT_SIZE,
                         Alignment.LEFT_TOP, shadow, moduleListGlyphColour);
                 if (entry.entry.tagText != null) {
+                    moduleListTagColour.update(entry);
                     NVGFonts.INTER.drawGradientText(entry.entry.tagText,
                             entry.textX + entry.entry.textWidth, entry.textY, MODULE_LIST_FONT_SIZE,
-                            Alignment.LEFT_TOP, shadow, moduleListGlyphColour);
+                            Alignment.LEFT_TOP, shadow, moduleListTagColour);
                 }
             } finally {
                 if (clipAnimatedEntry)
@@ -3383,7 +3488,8 @@ public class Interface extends Module {
         }
     }
 
-    private boolean renderModuleListGlyphBatch(NVGU vg, List<ModuleListRenderEntry> renderEntries) {
+    private boolean renderModuleListGlyphBatch(NVGU vg, List<ModuleListRenderEntry> renderEntries,
+                                               ModuleListGradient gradient) {
         if (!vg.beginGlyphBatch())
             return false;
 
@@ -3396,13 +3502,14 @@ public class Interface extends Module {
             float clipY = clip ? entry.y : 0f;
             float clipWidth = clip ? entry.width : Float.POSITIVE_INFINITY;
             float clipHeight = clip ? entry.height : Float.POSITIVE_INFINITY;
-            moduleListGlyphColour.update(entry);
+            moduleListGlyphColour.update(entry, gradient);
             boolean added = vg.addGlyphRun(entry.entry.text, entry.textX, entry.textY, font, MODULE_LIST_FONT_SIZE,
                     moduleListGlyphColour, null, shadow, shadowOffset, shadowOffset,
                     clipX, clipY, clipWidth, clipHeight);
             if (added && entry.entry.tagText != null) {
+                moduleListTagColour.update(entry);
                 added = vg.addGlyphRun(entry.entry.tagText, entry.textX + entry.entry.textWidth, entry.textY, font, MODULE_LIST_FONT_SIZE,
-                        moduleListGlyphColour, null, shadow, shadowOffset, shadowOffset,
+                        moduleListTagColour, null, shadow, shadowOffset, shadowOffset,
                         clipX, clipY, clipWidth, clipHeight);
             }
             if (!added) {
@@ -3479,17 +3586,78 @@ public class Interface extends Module {
 
     private void renderScaffoldBlocks(NVGU vg) {
         int blockCount = Scaffold.countUsableHotbarBlocks(mc.player.getInventory());
-        String text = blockCount + " blocks";
-        float width = NVGFonts.INTER.getWidth(text, 8.5f) + 12f;
-        float height = 13f;
+        float scale = Math.clamp(scaffoldScale.get(), 0.5f, 2f);
+        float fontSize = 8.5f * scale;
+        float textHeight = NVGFonts.INTER.getHeight(fontSize);
+        String countText = Integer.toString(blockCount);
+        String suffixText = " blocks";
+        float countWidth = NVGFonts.INTER.getWidth(countText, fontSize);
+        float suffixWidth = NVGFonts.INTER.getWidth(suffixText, fontSize);
+        float textWidth = countWidth + suffixWidth;
+        String style = scaffoldStyle.get().toLowerCase(Locale.ROOT);
+
+        float paddingX;
+        float height;
+        switch (style) {
+            case "minimal" -> {
+                paddingX = 0f;
+                height = textHeight;
+            }
+            case "pill" -> {
+                paddingX = 8f * scale;
+                height = Math.max(14f * scale, textHeight + 6f * scale);
+            }
+            case "bar" -> {
+                paddingX = 10f * scale;
+                height = Math.max(13f * scale, textHeight + 4f * scale);
+            }
+            default -> {
+                paddingX = 6f * scale;
+                height = Math.max(13f * scale, textHeight + 4f * scale);
+            }
+        }
+
+        float width = textWidth + paddingX * 2f;
         float x = (NanoVGManager.getScaledScreenWidth() - width) / 2f;
         float y = NanoVGManager.getScaledScreenHeight() / 2f + 16f;
+        Color background = new Color(4, 3, 8, 165);
+        Color border = new Color(255, 255, 255, 42);
 
-        vg.rectangle(x, y, width, height, new Color(4, 3, 8, 165));
-        vg.roundedRectangleBorder(x + 0.5f, y + 0.5f, width - 1f, height - 1f, 0f, 1f,
-                new Color(255, 255, 255, 42), Border.INSIDE);
-        NVGFonts.INTER.drawText(text, x + width / 2f, y + 2.5f, 8.5f,
-                new Color(233, 226, 240, 235), Alignment.CENTER_TOP, true);
+        switch (style) {
+            case "minimal" -> {
+                // Text-only style; the shadow keeps it readable over bright blocks.
+            }
+            case "pill" -> {
+                float radius = height * 0.5f;
+                vg.roundedRectangle(x, y, width, height, radius, background);
+                vg.roundedRectangleBorder(x + 0.5f, y + 0.5f, width - 1f, height - 1f,
+                        radius, 1f, NanoVGTheme.accent(70), Border.INSIDE);
+            }
+            case "bar" -> {
+                vg.rectangle(x, y, width, height, background);
+                vg.rectangle(x, y, 2.5f * scale, height, NanoVGTheme.ACCENT);
+                vg.roundedRectangleBorder(x + 0.5f, y + 0.5f, width - 1f, height - 1f,
+                        0f, 1f, border, Border.INSIDE);
+            }
+            default -> {
+                vg.rectangle(x, y, width, height, background);
+                vg.roundedRectangleBorder(x + 0.5f, y + 0.5f, width - 1f, height - 1f,
+                        0f, 1f, border, Border.INSIDE);
+            }
+        }
+
+        float textY = y + (height - textHeight) / 2f;
+        if (style.equals("default")) {
+            NVGFonts.INTER.drawText(countText + suffixText, x + width / 2f, textY, fontSize,
+                    new Color(233, 226, 240, 235), Alignment.CENTER_TOP, true);
+            return;
+        }
+
+        float textX = x + paddingX;
+        NVGFonts.INTER.drawText(countText, textX, textY, fontSize, NanoVGTheme.ACCENT,
+                Alignment.LEFT_TOP, true);
+        NVGFonts.INTER.drawText(suffixText, textX + countWidth, textY, fontSize, NanoVGTheme.muted(220),
+                Alignment.LEFT_TOP, true);
     }
 
     private static String getRomanNumeral(int num) {
@@ -3579,7 +3747,7 @@ public class Interface extends Module {
                     tabGuiExpanded = true;
                     tabGuiModuleIndex = clampTabGuiIndex(tabGuiModuleIndex, modules.size());
                 } else if (event.action == Keys.PRESS && !modules.isEmpty()) {
-                    modules.get(tabGuiModuleIndex).toggle();
+                    modules.get(tabGuiModuleIndex).toggleByUser();
                 }
             }
             case Keys.KEY_LEFT -> {
@@ -3740,7 +3908,9 @@ public class Interface extends Module {
                     HudEditor.withScale(vg, HudEditor.Element.TAB_GUI,
                             () -> renderTabGuiBody(vg, tabGuiCategories, tabGuiModulesForDraw));
 
-                if (scaffoldBlocks.get() && ModuleManager.getModuleState(Scaffold.class) && mc.player != null)
+                if (scaffoldBlocks.get()
+                        && (ModuleManager.getModuleState(Scaffold.class) || ModuleManager.getModuleState(LegitScaffold.class))
+                        && mc.player != null)
                     renderScaffoldBlocks(vg);
             });
         });

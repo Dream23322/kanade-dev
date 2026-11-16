@@ -4,8 +4,8 @@ import com.instrumentalist.krs.utils.IMinecraft;
 import com.instrumentalist.krs.hacks.ModuleManager;
 import com.instrumentalist.krs.hacks.features.combat.AntiBot;
 import com.instrumentalist.krs.hacks.features.combat.KillAura;
+import com.instrumentalist.krs.hacks.features.combat.SilentAura;
 import com.instrumentalist.krs.hacks.features.combat.Teams;
-import com.instrumentalist.krs.utils.entity.EntityExtension;
 import java.util.*;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.entity.Entity;
@@ -59,6 +59,9 @@ public class BehaviorUtils implements IMinecraft {
 
         List<Entity> multi = killAura ? KillAura.multiTargets : null;
         Entity closest = killAura ? KillAura.closestEntity : null;
+        SilentAura silentAura = ModuleManager.getModule(SilentAura.class);
+        Entity silentTarget = ModuleManager.getModuleState(SilentAura.class) && silentAura != null
+                ? silentAura.getCurrentTarget() : null;
         Entity targeted = (mc.crosshairPickEntity instanceof LivingEntity
                 && !(mc.crosshairPickEntity instanceof ArmorStand))
                 ? mc.crosshairPickEntity : null;
@@ -69,6 +72,7 @@ public class BehaviorUtils implements IMinecraft {
             }
         }
         addTarget(result, closest);
+        addTarget(result, silentTarget);
         addTarget(result, targeted);
 
         if (killAura) {
@@ -138,33 +142,57 @@ public class BehaviorUtils implements IMinecraft {
             if (isTargetInfoRetained(entity)) return true;
         }
 
+        SilentAura silentAura = ModuleManager.getModule(SilentAura.class);
+        if (ModuleManager.getModuleState(SilentAura.class)
+                && silentAura != null
+                && silentAura.getCurrentTarget() == entity)
+            return true;
+
         return mc.crosshairPickEntity == entity
                 && entity instanceof LivingEntity
                 && !(entity instanceof ArmorStand);
     }
 
     public static Entity findEnemy(double range) {
+        return findEnemy(0.0D, range);
+    }
+
+    /** Local counterpart of LiquidBounce's shouldBeAttacked() filter. */
+    public static boolean isValidCombatTarget(Entity entity) {
+        if (!(entity instanceof LivingEntity living)
+                || living.isDeadOrDying()
+                || entity instanceof ArmorStand
+                || entity instanceof LocalPlayer
+                || !entity.isAlive()
+                || entity.isRemoved()
+                || !entity.isAttackable())
+            return false;
+
+        if (mc.level != null && !mc.level.getWorldBorder().isWithinBounds(entity.blockPosition()))
+            return false;
+
+        return !isBot(living) && !isTeammate(living);
+    }
+
+    /** LiquidBounce's findEnemy(range) includes both range bounds. */
+    public static Entity findEnemy(double minRange, double maxRange) {
         if (mc.player == null || mc.level == null)
             return null;
 
-        boolean antiBot = ModuleManager.getModuleState(AntiBot.class);
-        boolean teams = ModuleManager.getModuleState(Teams.class);
         Vec3 eye = mc.player.getEyePosition();
-        double rangeSquared = range * range;
+        double minRangeSquared = Math.max(0.0D, minRange) * Math.max(0.0D, minRange);
+        double maxRangeSquared = Math.max(0.0D, maxRange) * Math.max(0.0D, maxRange);
 
         Entity closest = null;
         double closestDistance = Double.MAX_VALUE;
         for (Entity entity : mc.level.entitiesForRendering()) {
-            if (!(entity instanceof LivingEntity living)
-                    || living.isDeadOrDying()
-                    || entity instanceof ArmorStand
-                    || entity instanceof LocalPlayer
-                    || !entity.isAttackable()) continue;
+            if (!isValidCombatTarget(entity)) continue;
 
-            double distance = EntityExtension.squaredBoxedDistanceTo(entity, eye);
-            if (distance > rangeSquared || distance >= closestDistance) continue;
-
-            if (isBot(living, antiBot) || isTeammate(living, teams)) continue;
+            // LiquidBounce's Entity.box includes the pick radius.
+            double distance = entity.getBoundingBox()
+                    .inflate(entity.getPickRadius())
+                    .distanceToSqr(eye);
+            if (distance < minRangeSquared || distance > maxRangeSquared || distance >= closestDistance) continue;
 
             closest = entity;
             closestDistance = distance;

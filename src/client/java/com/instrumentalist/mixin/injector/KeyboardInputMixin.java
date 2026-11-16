@@ -3,6 +3,7 @@ package com.instrumentalist.mixin.injector;
 import com.instrumentalist.krs.hacks.features.combat.Velocity;
 import com.instrumentalist.krs.hacks.ModuleManager;
 import com.instrumentalist.krs.hacks.features.movement.MovementFix;
+import com.instrumentalist.krs.hacks.features.player.LegitScaffold;
 import com.instrumentalist.krs.hacks.features.player.LookTP;
 import com.instrumentalist.krs.hacks.features.player.Scaffold;
 import com.instrumentalist.krs.hacks.features.combat.WTap;
@@ -33,12 +34,14 @@ public abstract class KeyboardInputMixin {
             InputUtil.stop(input);
             MovementFix.updateInput(input);
             Scaffold.hookEdgeSafeSneakInput(input);
+            LegitScaffold.hookSneakInput(input);
             return;
         }
 
         if (!GuiInputBlocker.shouldBlockGameMovement()) {
             MovementFix.updateInput(input);
             Scaffold.hookEdgeSafeSneakInput(input);
+            LegitScaffold.hookSneakInput(input);
             Velocity.hookJumpResetInput(input);
             Scaffold.hookTellyJumpInput(input);
             Scaffold.hookAutoInputFix(input);
@@ -50,5 +53,6 @@ public abstract class KeyboardInputMixin {
         InputUtil.stop(input);
         MovementFix.updateInput(input);
         Scaffold.hookEdgeSafeSneakInput(input);
+        LegitScaffold.hookSneakInput(input);
     }
 }

@@ -5,6 +5,7 @@ import com.instrumentalist.krs.events.features.MotionEvent;
 import com.instrumentalist.krs.hacks.ModuleManager;
 import net.minecraft.world.item.ItemStack;
 import com.instrumentalist.krs.hacks.features.render.Camera;
+import com.instrumentalist.krs.hacks.features.combat.SilentAura;
 import com.instrumentalist.krs.hacks.features.render.NoRender;
 import com.instrumentalist.krs.hacks.features.exploit.PortalScreen;
 import com.instrumentalist.krs.hacks.features.movement.*;
@@ -110,6 +111,11 @@ public abstract class ClientPlayerEntityMixin extends Player {
 
         if (Camera.isFreeLooking()) {
             Camera.turn(deltaYaw, deltaPitch);
+            return;
+        }
+
+        if (SilentAura.isFreeLooking()) {
+            SilentAura.turn(deltaYaw, deltaPitch);
             return;
         }
 
@@ -266,6 +272,11 @@ public abstract class ClientPlayerEntityMixin extends Player {
             return false;
 
         return !this.isMovingSlowly() || this.isUnderWater() || noSlowActive && NoSlow.shouldNoSlowSneak();
+    }
+
+    @ModifyReturnValue(method = "shouldStopRunSprinting()Z", at = @At("RETURN"))
+    private boolean autoSprintCollisionStopHook(boolean original) {
+        return original || Sprint.shouldStopSprintingOnCollision((LocalPlayer) (Object) this);
     }
 
     @ModifyExpressionValue(method = {"shouldStopRunSprinting", "shouldStopSwimSprinting"}, at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/ClientInput;hasForwardImpulse()Z"))

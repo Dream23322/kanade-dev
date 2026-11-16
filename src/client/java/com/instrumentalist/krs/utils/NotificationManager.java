@@ -42,6 +42,7 @@ public class NotificationManager {
     private final ArrayList<Notification> renderEntries = new ArrayList<>(MAX_NOTIFICATIONS);
     private Notification editorPreview;
     private long lastPrepareNanos;
+    private int lastPreparedNotificationCount = -1;
 
     /** Visual weight of a notification; inferred from the title unless the caller picks one. */
     public enum Severity {
@@ -185,8 +186,9 @@ public class NotificationManager {
         float minY = Float.MAX_VALUE;
         float maxX = -Float.MAX_VALUE;
         float maxY = -Float.MAX_VALUE;
-        float stackOffset = 0f;
         int visible = 0;
+        List<Notification> shownNotifications = new ArrayList<>(MAX_NOTIFICATIONS);
+        List<Float> shownHeights = new ArrayList<>(MAX_NOTIFICATIONS);
 
         synchronized (NOTIFICATION_LOCK) {
             for (int index = 0; index < notifications.size(); ) {
@@ -204,14 +206,46 @@ public class NotificationManager {
                 if (alpha <= 0.002f) continue;
 
                 notification.measure(cardWidth, icons);
-                float height = notification.height(progress);
+                shownNotifications.add(notification);
+                shownHeights.add(notification.height(progress));
+                visible++;
+            }
+        }
+
+        boolean stackChanged = visible != lastPreparedNotificationCount;
+        lastPreparedNotificationCount = visible;
+        if (visible > 0) {
+            float totalHeight = 0f;
+            for (float height : shownHeights)
+                totalHeight += height;
+            totalHeight += CARD_GAP * Math.max(0, visible - 1);
+
+            float lowerBound = SCREEN_MARGIN;
+            float upperBound = Math.max(lowerBound, screenHeight - SCREEN_MARGIN);
+            float cursor;
+
+            if (stackUp) {
+                // Keep the whole stack on-screen. Clamping each card separately made
+                // stacks near the bottom edge collapse into one another.
+                cursor = Math.clamp(baseY, lowerBound, upperBound);
+                if (cursor - totalHeight < lowerBound)
+                    cursor = Math.min(upperBound, lowerBound + totalHeight);
+            } else {
+                cursor = Math.clamp(baseY, lowerBound, upperBound);
+                if (cursor + totalHeight > upperBound)
+                    cursor = Math.max(lowerBound, upperBound - totalHeight);
+            }
+
+            for (int index = 0; index < shownNotifications.size(); index++) {
+                Notification notification = shownNotifications.get(index);
+                float height = shownHeights.get(index);
                 float x = right ? baseX - cardWidth : baseX;
-                float targetY = stackUp ? baseY - stackOffset - height : baseY + stackOffset;
-                targetY = Math.clamp(targetY, SCREEN_MARGIN,
-                        Math.max(SCREEN_MARGIN, screenHeight - height - SCREEN_MARGIN));
+                float targetY = stackUp ? cursor - height : cursor;
+                targetY = Math.clamp(targetY, lowerBound, Math.max(lowerBound, upperBound - height));
 
-                notification.setTargetY(targetY, smoothing);
+                notification.setTargetY(targetY, stackChanged ? 1f : smoothing);
 
+                float alpha = notification.alpha(now, durationMillis);
                 float slide = (1f - easeOutCubic(notification.inProgress(now))) * 4f;
                 float y = notification.animatedY() + (stackUp ? -slide : slide);
 
@@ -223,8 +257,11 @@ public class NotificationManager {
                 minY = Math.min(minY, y);
                 maxX = Math.max(maxX, x + cardWidth);
                 maxY = Math.max(maxY, y + height);
-                stackOffset += height + CARD_GAP;
-                visible++;
+
+                if (stackUp)
+                    cursor = targetY - CARD_GAP;
+                else
+                    cursor = targetY + height + CARD_GAP;
             }
         }
 
@@ -255,6 +292,7 @@ public class NotificationManager {
             notifications.clear();
         }
         renderEntries.clear();
+        lastPreparedNotificationCount = -1;
     }
 
     public void renderNotificationEffects(NVGU vg) {

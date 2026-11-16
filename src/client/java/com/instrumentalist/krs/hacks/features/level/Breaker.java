@@ -4,6 +4,8 @@ import com.instrumentalist.krs.utils.render.RenderColors;
 import com.instrumentalist.krs.Client;
 import com.instrumentalist.krs.events.features.KeyboardEvent;
 import com.instrumentalist.krs.events.features.MotionEvent;
+import com.instrumentalist.krs.events.features.Render3DEvent;
+import com.instrumentalist.krs.events.features.RenderHudEvent;
 import com.instrumentalist.krs.events.features.WorldEvent;
 import com.instrumentalist.krs.hacks.Module;
 import com.instrumentalist.krs.hacks.ModuleCategory;
@@ -14,7 +16,11 @@ import com.instrumentalist.krs.hacks.features.player.Scaffold;
 import com.instrumentalist.krs.utils.entity.PlayerUtil;
 import com.instrumentalist.krs.utils.math.BehaviorUtils;
 import com.instrumentalist.krs.utils.math.ToolUtil;
+import com.instrumentalist.krs.utils.nanovg.NVGFonts;
+import com.instrumentalist.krs.utils.nanovg.NanoVGManager;
 import com.instrumentalist.krs.utils.render.BlockHighlight;
+import com.instrumentalist.krs.utils.render.NanoVGTheme;
+import com.instrumentalist.krs.utils.render.RenderUtil;
 import com.instrumentalist.krs.utils.value.BooleanValue;
 import com.instrumentalist.krs.utils.value.FloatValue;
 import com.instrumentalist.krs.utils.value.ListValue;
@@ -31,6 +37,8 @@ import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import com.instrumentalist.krs.utils.input.Keys;
+import org.nvgu.NVGU;
+import org.nvgu.util.Alignment;
 
 import java.util.HashSet;
 import java.util.Locale;
@@ -62,6 +70,13 @@ public class Breaker extends Module {
     private static final BooleanValue autoWhitelist = new BooleanValue("Auto Whitelist", false)
             .describe("Remembers beds that turned out to be safe to break.");
 
+    @Setting
+    private static final ListValue render = new ListValue(
+            "Render",
+            new String[]{"Off", "2D", "3D"},
+            "3D"
+    ).describe("Draws a blinking Breaking tag at the target block (3D) or near the crosshair (2D).");
+
     private static boolean wasBreaking = false;
 
     private int hypTick = 0;
@@ -69,6 +84,12 @@ public class Breaker extends Module {
     private BlockPos cachedSecondPos = null;
     private final BlockHighlight blockHighlight = new BlockHighlight(RenderColors.BREAKER);
     private int originalSlot = -1;
+    private BlockPos renderTarget;
+    private boolean renderActive;
+    private boolean hasRenderPosition3D;
+    private float renderScreenX;
+    private float renderScreenY;
+    private final float[] renderProjection = new float[3];
     private boolean progress = false;
     private boolean secondProgress = false;
     private boolean breakerNoKillAura = false;
@@ -96,6 +117,9 @@ public class Breaker extends Module {
 
     @Override
     public void onEnable() {
+        renderTarget = null;
+        renderActive = false;
+        hasRenderPosition3D = false;
     }
 
     @Override
@@ -203,6 +227,9 @@ public class Breaker extends Module {
         progress = false;
         secondProgress = false;
         wasBreaking = false;
+        renderTarget = null;
+        renderActive = false;
+        hasRenderPosition3D = false;
         blockHighlight.setTarget(null);
     }
 
@@ -542,11 +569,86 @@ public class Breaker extends Module {
     private void updateHighlight(ClientLevel level, BlockPos highlightPos) {
         if (highlightPos == null) {
             blockHighlight.setTarget(null);
+            renderTarget = null;
+            renderActive = false;
+            hasRenderPosition3D = false;
             return;
         }
 
         BlockState blockState = level.getBlockState(highlightPos);
         blockHighlight.setTarget(highlightPos, blockState.getBlock() instanceof BedBlock ? findOtherBedPart(level, highlightPos, blockState) : null);
+        renderTarget = highlightPos.immutable();
+        renderActive = isBreakingRenderActive();
+    }
+
+    private boolean isBreakingRenderActive() {
+        return !mode.get().equalsIgnoreCase("normal") || clickMode.get().equalsIgnoreCase("break");
+    }
+
+    @Override
+    public void onRender3D(Render3DEvent event) {
+        hasRenderPosition3D = false;
+        BlockPos target = renderTarget;
+        if (!renderActive || target == null || !is3DRender())
+            return;
+
+        Vec3 position = new Vec3(target.getX() + 0.5, target.getY() + 1.2, target.getZ() + 0.5);
+        if (!RenderUtil.INSTANCE.renderedWorldToScreen(position.x, position.y, position.z, renderProjection))
+            return;
+
+        renderScreenX = NanoVGManager.fromFramebufferX(renderProjection[0]);
+        renderScreenY = NanoVGManager.fromFramebufferY(renderProjection[1]);
+        hasRenderPosition3D = true;
+    }
+
+    @Override
+    public void onRenderHud(RenderHudEvent event) {
+        if (!renderActive || renderTarget == null || Client.nanoVgManager == null
+                || mc.gui == null || mc.gui.hud.isHidden() || mc.gui.screen() != null
+                || !RenderUtil.shouldRenderWorldHudOverlays())
+            return;
+
+        String renderMode = render.get();
+        if (renderMode.equalsIgnoreCase("Off"))
+            return;
+
+        boolean render3D = is3DRender();
+        if (render3D && !hasRenderPosition3D)
+            return;
+
+        float x = render3D ? renderScreenX : NanoVGManager.getScaledScreenWidth() * 0.5f;
+        float y = render3D ? renderScreenY : NanoVGManager.getScaledScreenHeight() * 0.5f + 34f;
+        float alpha = 0.55f + 0.45f * (0.5f + 0.5f * (float) Math.sin(System.nanoTime() / 250_000_000.0));
+
+        if (render3D)
+            Client.nanoVgManager.loadWorldAnchored(vg -> drawBreakingTag(vg, x, y, alpha));
+        else
+            Client.nanoVgManager.load(vg -> drawBreakingTag(vg, x, y, alpha));
+    }
+
+    private static boolean is3DRender() {
+        return render.get().equalsIgnoreCase("3D");
+    }
+
+    private static void drawBreakingTag(NVGU vg, float x, float y, float alpha) {
+        if (vg == null || alpha <= 0.01f)
+            return;
+
+        String text = "Breaking";
+        float fontSize = 14f;
+        float textWidth = NVGFonts.INTER_MEDIUM.getWidth(text, fontSize);
+        float textHeight = NVGFonts.INTER.getHeight(fontSize);
+        float paddingX = 8f;
+        float paddingY = 4f;
+        float width = textWidth + paddingX * 2f;
+        float height = textHeight + paddingY * 2f;
+        float left = x - width * 0.5f;
+        float top = y - height;
+
+        NanoVGTheme.renderCompact(vg, left, top, width, height, NanoVGTheme.RADIUS_LABEL, alpha, -18);
+        NVGFonts.INTER_MEDIUM.drawText(text, x, top + paddingY, fontSize,
+                RenderColors.withAlpha(RenderColors.BREAKER, Math.round(255f * alpha)),
+                Alignment.CENTER_TOP, true);
     }
 
     private boolean isBedTouchingAir(ClientLevel level, BlockPos bedPos) {
