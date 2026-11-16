@@ -86,6 +86,7 @@ public class NanoVGClickGuiScreen extends Screen {
     private static final Color TOP_BAR_BUTTON_BACKGROUND = new Color(10, 7, 16, 165);
     private static final int WRAP_CACHE_LIMIT = 4096;
     private static final Map<WrapKey, List<String>> WRAP_CACHE = new HashMap<>();
+    private static final Object INFO_TOOLTIP_TARGET = new Object();
     private static final int ROOT_PANEL_BACKGROUND_ALPHA_OFFSET = 70;
     private static final int COMPACT_BACKGROUND_ALPHA_OFFSET = 35;
 
@@ -243,6 +244,8 @@ public class NanoVGClickGuiScreen extends Screen {
     private Rect closeRect = new Rect(0f, 0f, 0f, 0f);
     private Rect hudEditorRect = new Rect(0f, 0f, 0f, 0f);
     private Rect clientSettingsRect = new Rect(0f, 0f, 0f, 0f);
+    private Rect infoButtonRect = new Rect(0f, 0f, 0f, 0f);
+    private Rect configButtonRect = new Rect(0f, 0f, 0f, 0f);
     private Rect searchRect = new Rect(0f, 0f, 0f, 0f);
     private Rect searchClearRect = new Rect(0f, 0f, 0f, 0f);
     private Rect listViewport = new Rect(0f, 0f, 0f, 0f);
@@ -279,6 +282,8 @@ public class NanoVGClickGuiScreen extends Screen {
     private Module hoveredModule;
     private SettingValue<?> hoveredSetting;
     private Object tooltipHoverTarget;
+    private Object hoveredTooltipTarget;
+    private boolean infoButtonHovered;
     private long tooltipHoverStartNanos;
     private String tooltipText = "";
     private float settingsDockReveal;
@@ -383,6 +388,22 @@ public class NanoVGClickGuiScreen extends Screen {
 
         if (handleTagTabClick(mouseX, mouseY, button))
             return true;
+
+        if (isModuleView() && !controlHeld && button == Keys.MOUSE_BUTTON_LEFT
+                && infoButtonRect.contains(mouseX, mouseY))
+            return true;
+
+        if (isModuleView() && !controlHeld && button == Keys.MOUSE_BUTTON_LEFT
+                && configButtonRect.contains(mouseX, mouseY)) {
+            configView = true;
+            commandView = false;
+            clientSettingsView = false;
+            selectedConfigTab = ConfigTab.MODULE;
+            searchQuery = "";
+            clearInteractionState();
+            resetListScroll();
+            return true;
+        }
 
         if (button == Keys.MOUSE_BUTTON_LEFT && clientSettingsRect.contains(mouseX, mouseY)) {
             clientSettingsView = !clientSettingsView;
@@ -1018,6 +1039,8 @@ public class NanoVGClickGuiScreen extends Screen {
         deferControlChrome = false;
         hoveredModule = null;
         hoveredSetting = null;
+        hoveredTooltipTarget = null;
+        infoButtonHovered = false;
         tooltipText = "";
         settingsPanelRenderModule = null;
         settingsPanelRenderConfig = settingsPanelConfig;
@@ -1390,10 +1413,23 @@ public class NanoVGClickGuiScreen extends Screen {
         float height = cu(18f);
         float fieldWidth = cu(262f);
         float gearWidth = cu(18f);
-        float left = (screenWidth - fieldWidth - gearWidth) / 2f;
+        float buttonWidth = cu(18f);
+        float buttonGap = cu(3f);
+        float leftClusterWidth = buttonWidth * 2f + buttonGap;
+        float totalWidth = leftClusterWidth + buttonGap + fieldWidth + gearWidth;
+        float left = (screenWidth - totalWidth) / 2f;
         float top = cu(16f);
-        searchRect = new Rect(left, top, fieldWidth, height);
-        clientSettingsRect = new Rect(left + fieldWidth, top, gearWidth, height);
+        infoButtonRect = new Rect(left, top, buttonWidth, height);
+        configButtonRect = new Rect(left + buttonWidth + buttonGap, top, buttonWidth, height);
+        searchRect = new Rect(left + leftClusterWidth + buttonGap, top, fieldWidth, height);
+        clientSettingsRect = new Rect(searchRect.x + fieldWidth, top, gearWidth, height);
+        drawAtmosphereUtilityButton(vg, infoButtonRect, MaterialIcon.INFO, theme);
+        drawAtmosphereUtilityButton(vg, configButtonRect, MaterialIcon.TUNE, theme);
+        infoButtonHovered = infoButtonRect.contains(scaledMouseX, scaledMouseY);
+        if (infoButtonHovered) {
+            hoveredTooltipTarget = INFO_TOOLTIP_TARGET;
+            rememberTooltip(INFO_TOOLTIP_TARGET, "Hold Ctrl to reveal more buttons\nCtrl + scroll to scale the interface");
+        }
         boolean focused = textFocus == TextFocus.SEARCH;
         boolean searchHovered = searchRect.contains(scaledMouseX, scaledMouseY);
         vg.rectangle(searchRect.x, searchRect.y, searchRect.width, searchRect.height, theme.searchBg);
@@ -1425,6 +1461,14 @@ public class NanoVGClickGuiScreen extends Screen {
                 clientSettingsRect.centerY(), columnFont(11f),
                 clientSettingsView ? theme.enabled : theme.searchText,
                 Alignment.CENTER_MIDDLE, true);
+    }
+
+    private void drawAtmosphereUtilityButton(NVGU vg, Rect rect, String icon, GuiTheme theme) {
+        boolean hovered = rect.contains(scaledMouseX, scaledMouseY);
+        vg.rectangle(rect.x, rect.y, rect.width, rect.height,
+                hovered ? theme.gearHover : theme.searchBg);
+        NVGFonts.ICON.drawText(icon, rect.centerX(), rect.centerY(), columnFont(11f),
+                hovered ? theme.enabled : theme.searchText, Alignment.CENTER_MIDDLE, true);
     }
 
     private void renderColumns(NVGU vg, float screenWidth, float screenHeight) {
@@ -4965,13 +5009,21 @@ public class NanoVGClickGuiScreen extends Screen {
     }
 
     private void renderHoverTooltip(NVGU vg) {
-        boolean ready = (hoveredModule != null || hoveredSetting != null)
+        boolean hasTooltipTarget = hoveredModule != null
+                || hoveredSetting != null
+                || hoveredTooltipTarget != null
+                || infoButtonHovered;
+        boolean blockedByModule = hoveredModule != null
+                && (settingsPanelModule == hoveredModule || expandedModules.contains(hoveredModule));
+        boolean ready = hasTooltipTarget
+                && !blockedByModule
                 && !tooltipText.isEmpty()
-                && settingsPanelModule != hoveredModule
-                && !expandedModules.contains(hoveredModule)
                 && System.nanoTime() - tooltipHoverStartNanos >= 280_000_000L;
         if (!ready)
-            tooltipHoverTarget = hoveredModule != null ? hoveredModule : hoveredSetting;
+            tooltipHoverTarget = hoveredModule != null ? hoveredModule
+                    : hoveredSetting != null ? hoveredSetting
+                    : hoveredTooltipTarget != null ? hoveredTooltipTarget
+                    : infoButtonHovered ? INFO_TOOLTIP_TARGET : null;
         float progress = animate("module-tooltip", ready, 0.22f);
         if (progress <= 0.01f || tooltipText.isEmpty())
             return;
