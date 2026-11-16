@@ -350,7 +350,7 @@ public class Interface extends Module {
     @Setting
     private static final BooleanValue moduleListAccentBar = new BooleanValue(
             "Module List Accent Bar",
-            false
+            true
     ).describe("Draws the accent strip on each module list row.");
 
     @Setting
@@ -368,13 +368,19 @@ public class Interface extends Module {
     @Setting
     private static final BooleanValue moduleListGradient = new BooleanValue(
             "Module List Gradient",
-            false
+            true
     ).describe("Blends the theme accent across each module list row.");
+
+    @Setting
+    private static final BooleanValue moduleListWaveGradient = new BooleanValue(
+            "Module List Wave Gradient",
+            false
+    ).describe("Animates the module list accent gradient as a moving wave.");
 
     @Setting
     private static final FloatValue moduleListSpacing = new FloatValue(
             "Module List Spacing",
-            0f,
+            2.13f,
             0f,
             4f,
             "x"
@@ -383,11 +389,20 @@ public class Interface extends Module {
     @Setting
     private static final FloatValue moduleListPadding = new FloatValue(
             "Module List Padding",
-            2f,
+            5.9f,
             0f,
             16f,
             "px"
     ).describe("Horizontal space between the module list border and its text.");
+
+    @Setting
+    private static final FloatValue moduleListOutlineThickness = new FloatValue(
+            "Module List Outline Thickness",
+            0.75f,
+            0f,
+            3f,
+            "px"
+    ).describe("Thickness of the stepped module list outline.");
 
     public static List<Module> sortedModules;
 
@@ -3187,9 +3202,16 @@ public class Interface extends Module {
             if (alpha <= 0 || entry.width <= 0f || entry.height <= 0f)
                 continue;
 
-            if (background)
+            if (background) {
+                int topAlpha = (int) (alpha * 0.56f);
+                int bottomAlpha = (int) (alpha * 0.36f);
                 vg.rectangle(entry.x, entry.y, entry.width, entry.height,
-                        NanoVGTheme.background((int) (alpha * 0.40f)));
+                        vg.linearGradient(entry.x, entry.y, entry.width, entry.height,
+                                Math.max(1f, entry.height),
+                                NanoVGTheme.background(topAlpha),
+                                NanoVGTheme.background(bottomAlpha),
+                                LinearGradientDirection.TOP_TO_BOTTOM));
+            }
 
             if (accentBar) {
                 float barWidth = Math.min(MODULE_LIST_ACCENT_WIDTH, entry.width);
@@ -3205,7 +3227,10 @@ public class Interface extends Module {
     }
 
     private static void renderModuleListSteppedOutline(NVGU vg, List<ModuleListRenderEntry> entries) {
-        final float line = 0.75f;
+        float line = Math.max(0f, moduleListOutlineThickness.get());
+        if (line <= 0.01f)
+            return;
+
         for (int i = 0; i < entries.size(); i++) {
             ModuleListRenderEntry entry = entries.get(i);
             if (entry.width <= 0f || entry.height <= 0f || entry.alpha <= 0)
@@ -3230,24 +3255,41 @@ public class Interface extends Module {
     }
 
     private static final class ModuleListGlyphColour implements NVGU.GlyphColour {
+        private static final float WAVE_SPEED = 0.0012f;
+        private static final float WAVE_ROW_PHASE = 0.28f;
+
         private int alpha;
         private float rowLeft;
+        private float rowTop;
         private float rowWidth = 1f;
+        private long timeMillis;
         private boolean gradient;
+        private boolean waveGradient;
 
         private void update(ModuleListRenderEntry entry) {
             this.alpha = entry.alpha;
             this.rowLeft = entry.x;
+            this.rowTop = entry.y;
             this.rowWidth = Math.max(1f, entry.width);
+            this.timeMillis = entry.colorTimeMillis;
             this.gradient = moduleListGradient.get();
+            this.waveGradient = moduleListWaveGradient.get();
         }
 
         @Override
         public Color colourAt(float glyphCenterX) {
-            Color accent = gradient
-                    ? NanoVGTheme.blend(NanoVGTheme.ACCENT, NanoVGTheme.ACCENT_END,
-                    (glyphCenterX - rowLeft) / rowWidth)
-                    : NanoVGTheme.ACCENT;
+            float progress = Math.clamp((glyphCenterX - rowLeft) / rowWidth, 0f, 1f);
+            Color accent;
+            if (waveGradient) {
+                float phase = (float) ((timeMillis * (double) WAVE_SPEED) % (Math.PI * 2.0))
+                        + rowTop * WAVE_ROW_PHASE;
+                float wave = 0.5f + 0.5f * (float) Math.sin(progress * Math.PI * 2f + phase);
+                accent = NanoVGTheme.blend(NanoVGTheme.ACCENT, NanoVGTheme.ACCENT_END, wave);
+            } else if (gradient) {
+                accent = NanoVGTheme.blend(NanoVGTheme.ACCENT, NanoVGTheme.ACCENT_END, progress);
+            } else {
+                accent = NanoVGTheme.ACCENT;
+            }
             // Keep the chosen theme, but soften the colour like the reference.
             Color muted = NanoVGTheme.blend(accent, MODULE_LIST_TEXT_NEUTRAL, 0.68f);
             return new Color(muted.getRed(), muted.getGreen(), muted.getBlue(), Math.clamp(alpha, 0, 255));
