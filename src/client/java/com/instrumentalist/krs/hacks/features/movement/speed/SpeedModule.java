@@ -27,7 +27,7 @@ public class SpeedModule extends Module {
     @Setting
     private static final ListValue speedMode = new ListValue(
             "Speed Mode",
-            new String[]{"Vanilla", "Smooth Vanilla", "Legit Hop", "YPort", "Verus-b3882", "HypixelBHop", "HypixelLowHop", "Spartan-4.0.4.3", "Spartan-4.0.4.3-FastFall", "CubeCraft-2024-06-30", "Vulcan-2.8.6", "Vulcan-2.8.8", "Vulcan-2.8.6-Ground", "Grim-2.3.73", "NCP-2024-08-31", "Intave-14", "Intave-14-Fast", "HylexLowHop", "HylexGround", "BlocksMC", "Matrix-7", "Rewound", "Modern MMC", "5b5t", "Boost", "Flag Boost", "Miniblox"},
+            new String[]{"Vanilla", "Smooth Vanilla", "Legit Hop", "YPort", "Verus-b3882", "HypixelBHop", "HypixelLowHop", "Spartan-4.0.4.3", "Spartan-4.0.4.3-FastFall", "CubeCraft-2024-06-30", "Vulcan-2.8.6", "Vulcan-2.8.8", "Vulcan-2.8.6-Ground", "Grim-2.3.73", "NCP-2024-08-31", "Intave-14", "Intave-14-Fast", "HylexLowHop", "HylexGround", "BlocksMC", "Matrix-7", "Rewound", "Modern MMC", "5b5t", "Boost", "Flag Boost", "Miniblox", "Watchdog Legacy"},
             "Vanilla"
     ).describe("Speed bypass to use.");
 

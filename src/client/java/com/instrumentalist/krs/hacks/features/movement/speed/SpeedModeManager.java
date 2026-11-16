@@ -101,6 +101,9 @@ public class SpeedModeManager {
             case "miniblox":
                 currentMode = new MinibloxSpeed();
                 break;
+            case "watchdog legacy":
+                currentMode = new WatchdogLegacySpeed();
+                break;
             default:
                 currentMode = null;
         }
