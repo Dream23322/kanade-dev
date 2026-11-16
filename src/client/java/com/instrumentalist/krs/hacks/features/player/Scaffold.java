@@ -2079,7 +2079,11 @@ public class Scaffold extends Module {
         if (state == null || state.isAir() || state.canBeReplaced() || !state.getFluidState().isEmpty())
             return false;
 
-        // GUI/container blocks remain valid as world support (placements are guarded separately).
+        // Right-clicking a GUI/container block as support would open its screen instead of
+        // placing the scaffold block, so those blocks cannot be placement supports.
+        if (level != null && pos != null && isGuiBlock(state, level, pos))
+            return false;
+
         boolean partial = isPartialBlock(state.getBlock());
         if (!partial)
             return true;
@@ -2796,6 +2800,7 @@ public class Scaffold extends Module {
 
         if (isGuiBlock(level.getBlockState(target.pos()), level, target.pos())) return true;
         if (!isScaffoldReplaceable(target.pos())) return true;
+        if (isGuiBlock(level.getBlockState(target.neighbour()), level, target.neighbour())) return false;
         if (!isScaffoldSupport(level.getBlockState(target.neighbour()), target.neighbour())) return false;
 
         try {
