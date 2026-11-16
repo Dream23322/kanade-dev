@@ -1,0 +1,398 @@
+package com.instrumentalist.mixin.injector;
+
+import com.instrumentalist.krs.Client;
+import com.instrumentalist.krs.events.features.MotionEvent;
+import com.instrumentalist.krs.hacks.ModuleManager;
+import net.minecraft.world.item.ItemStack;
+import com.instrumentalist.krs.hacks.features.render.Camera;
+import com.instrumentalist.krs.hacks.features.render.NoRender;
+import com.instrumentalist.krs.hacks.features.exploit.PortalScreen;
+import com.instrumentalist.krs.hacks.features.movement.*;
+import com.instrumentalist.krs.hacks.features.player.Phase;
+import com.instrumentalist.krs.hacks.features.player.Freecam;
+import com.instrumentalist.krs.utils.move.InputUtil;
+import com.instrumentalist.krs.utils.navigation.Navigator;
+import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
+import com.llamalad7.mixinextras.injector.ModifyReturnValue;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import com.mojang.authlib.GameProfile;
+import org.spongepowered.asm.mixin.Final;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.client.player.ClientInput;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
+import net.minecraft.util.Mth;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
+
+@Mixin(LocalPlayer.class)
+public abstract class ClientPlayerEntityMixin extends Player {
+    @Unique
+    private static ClientInput krs$freecamRealInput;
+
+    @Unique
+    private static int krs$freecamInputSwapDepth;
+
+    public ClientPlayerEntityMixin(Level world, GameProfile gameProfile) {
+        super(world, gameProfile);
+    }
+
+    @Shadow
+    protected abstract void sendIsSprintingIfNeeded();
+
+    @Shadow
+    private double xLast;
+    @Shadow
+    private double yLast;
+    @Shadow
+    private double zLast;
+    @Shadow
+    private float yRotLast;
+    @Shadow
+    private float xRotLast;
+    @Shadow
+    private boolean lastOnGround;
+    @Final
+    @Shadow
+    public ClientPacketListener connection;
+
+    @Shadow
+    protected abstract boolean isControlledCamera();
+
+    @Shadow
+    public abstract boolean isMovingSlowly();
+
+    @Shadow
+    private boolean isSlowDueToUsingItem() {
+        return false;
+    }
+
+    @Shadow
+    private boolean isSprintingPossible(boolean isFlying) {
+        return false;
+    }
+
+    @Shadow
+    private int positionReminder;
+    @Shadow
+    private boolean autoJumpEnabled;
+
+    @Shadow
+    private boolean lastHorizontalCollision;
+
+    @Shadow
+    @Final
+    protected Minecraft minecraft;
+
+    @Shadow public ClientInput input;
+
+    @Override
+    public void turn(double deltaYaw, double deltaPitch) {
+        if (ModuleManager.getModuleState(Freecam.class) && Freecam.getCanFly()) {
+            Freecam.turn(deltaYaw, deltaPitch);
+            return;
+        }
+
+        if (Camera.isFreeLooking()) {
+            Camera.turn(deltaYaw, deltaPitch);
+            return;
+        }
+
+        super.turn(deltaYaw, deltaPitch);
+    }
+
+    @Inject(method = "displayItemActivation", at = @At("HEAD"), cancellable = true)
+    private void noRenderTotemAnimation(ItemStack itemStack, CallbackInfo ci) {
+        if (NoRender.active(NoRender.totemAnimation))
+            ci.cancel();
+    }
+
+    @Inject(method = "tick", at = @At("HEAD"))
+    private void freecamTickInputHead(CallbackInfo ci) {
+        krs$swapFreecamInput();
+    }
+
+    @Inject(method = "tick", at = @At("RETURN"))
+    private void freecamTickInputReturn(CallbackInfo ci) {
+        krs$restoreFreecamInput();
+    }
+
+    // Since 26.3 input and movement packets are sent from sendChanges() instead of tick(), so hide the real
+    // input there as well. The real input was already ticked by the tick() swap, so it is not ticked again.
+    @Unique
+    private ClientInput krs$sendChangesRealInput;
+
+    @Inject(method = "sendChanges", at = @At("HEAD"))
+    private void freecamSendChangesInputHead(CallbackInfo ci) {
+        if (!ModuleManager.getModuleState(Freecam.class) || !Freecam.getCanFly() || krs$freecamInputSwapDepth > 0)
+            return;
+
+        krs$sendChangesRealInput = this.input;
+        this.input = new ClientInput();
+        Navigator.applyInput(this.input);
+    }
+
+    @Inject(method = "sendChanges", at = @At("RETURN"))
+    private void freecamSendChangesInputReturn(CallbackInfo ci) {
+        if (krs$sendChangesRealInput == null)
+            return;
+
+        this.input = krs$sendChangesRealInput;
+        krs$sendChangesRealInput = null;
+    }
+
+    @Inject(method = "rideTick", at = @At("HEAD"))
+    private void freecamRideTickInputHead(CallbackInfo ci) {
+        krs$swapFreecamInput();
+    }
+
+    @Inject(method = "rideTick", at = @At("RETURN"))
+    private void freecamRideTickInputReturn(CallbackInfo ci) {
+        krs$restoreFreecamInput();
+    }
+
+    @Inject(method = "aiStep", at = @At("HEAD"))
+    private void freecamStopInput(CallbackInfo ci) {
+        if (ModuleManager.getModuleState(Freecam.class) && Freecam.getCanFly()) {
+            InputUtil.stop(this.input);
+            Navigator.applyInput(this.input);
+        }
+    }
+
+    @ModifyReturnValue(method = "isShiftKeyDown()Z", at = @At("RETURN"))
+    private boolean freecamShiftKeyHook(boolean original) {
+        return original && (Navigator.isControlling() || !(ModuleManager.getModuleState(Freecam.class) && Freecam.getCanFly()));
+    }
+
+    @Inject(method = "raycastHitResult(FLnet/minecraft/world/entity/Entity;)Lnet/minecraft/world/phys/HitResult;", at = @At("HEAD"), cancellable = true)
+    private void freecamRaycastHook(float tickDelta, Entity cameraEntity, CallbackInfoReturnable<HitResult> cir) {
+        if (!ModuleManager.getModuleState(Freecam.class) || !Freecam.getCanFly())
+            return;
+
+        Vec3 camStart = Freecam.getCamPos(tickDelta);
+        Vec3 camEnd = camStart.add(Freecam.getScaledCamDir(this.blockInteractionRange()));
+        cir.setReturnValue(this.level().clip(new ClipContext(
+                camStart,
+                camEnd,
+                ClipContext.Block.OUTLINE,
+                ClipContext.Fluid.NONE,
+                (Entity) (Object) this
+        )));
+    }
+
+    @Unique
+    private void krs$swapFreecamInput() {
+        if (!ModuleManager.getModuleState(Freecam.class) || !Freecam.getCanFly())
+            return;
+
+        krs$freecamInputSwapDepth++;
+        if (krs$freecamInputSwapDepth > 1)
+            return;
+
+        krs$freecamRealInput = this.input;
+        this.input.tick();
+        this.input = new ClientInput();
+        Navigator.applyInput(this.input);
+    }
+
+    @Unique
+    private void krs$restoreFreecamInput() {
+        if (krs$freecamInputSwapDepth > 0)
+            krs$freecamInputSwapDepth--;
+
+        if (krs$freecamInputSwapDepth > 0 || krs$freecamRealInput == null)
+            return;
+
+        this.input = krs$freecamRealInput;
+        krs$freecamRealInput = null;
+    }
+
+    @ModifyExpressionValue(method = "handlePortalTransitionEffect", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/screens/Screen;isAllowedInPortal()Z"))
+    private boolean portalScreenHook(boolean original) {
+        return PortalScreen.screenOpenLimitHook(original);
+    }
+
+    @ModifyExpressionValue(method = "modifyInput(Lnet/minecraft/world/phys/Vec2;)Lnet/minecraft/world/phys/Vec2;", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;itemUseSpeedMultiplier()F"))
+    private float noSlowItemUseMultiplierHook(float original) {
+        return NoSlow.shouldNoSlowUseItem() ? 1.0F : original;
+    }
+
+    @ModifyExpressionValue(method = "modifyInput(Lnet/minecraft/world/phys/Vec2;)Lnet/minecraft/world/phys/Vec2;", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;isMovingSlowly()Z"))
+    private boolean noSlowSneakMultiplierHook(boolean original) {
+        return original && !NoSlow.shouldNoSlowSneak();
+    }
+
+    @ModifyExpressionValue(method = "aiStep", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/ClientInput;hasForwardImpulse()Z"))
+    private boolean movementFixSprintStartImpulse(boolean original) {
+        if (MovementFix.shouldFixSprintCondition() || Sprint.shouldSprintOmnidirectional())
+            return MovementFix.hasForwardImpulseForSprint(this.input);
+
+        return original;
+    }
+
+    @ModifyReturnValue(method = "canStartSprinting()Z", at = @At("RETURN"))
+    private boolean canStartSprintingHook(boolean original) {
+        if (original)
+            return original;
+
+        boolean noSlowActive = NoSlow.noSlowHook();
+        boolean shouldFixForwardImpulse = MovementFix.shouldFixSprintCondition() || Sprint.shouldSprintOmnidirectional();
+
+        if (!noSlowActive && !shouldFixForwardImpulse)
+            return false;
+
+        if (this.isSprinting() || !MovementFix.hasForwardImpulseForSprint(this.input) || !this.isSprintingPossible(this.getAbilities().flying))
+            return false;
+
+        if (this.isSlowDueToUsingItem() && !noSlowActive)
+            return false;
+
+        if (this.isFallFlying() && !this.isUnderWater())
+            return false;
+
+        return !this.isMovingSlowly() || this.isUnderWater() || noSlowActive && NoSlow.shouldNoSlowSneak();
+    }
+
+    @ModifyExpressionValue(method = {"shouldStopRunSprinting", "shouldStopSwimSprinting"}, at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/ClientInput;hasForwardImpulse()Z"))
+    private boolean movementFixSprintStopImpulse(boolean original) {
+        if (MovementFix.shouldFixSprintCondition() || Sprint.shouldSprintOmnidirectional())
+            return MovementFix.hasForwardImpulseForSprint(this.input);
+
+        return original;
+    }
+
+    @Inject(method = "moveTowardsClosestSpace(DD)V", at = @At("HEAD"), cancellable = true)
+    private void hookNoPush(double x, double z, CallbackInfo ci) {
+        if (ModuleManager.getModuleState(NoPush.class) || ModuleManager.getModuleState(Phase.class))
+            ci.cancel();
+    }
+
+    @ModifyReturnValue(method = "getJumpRidingScale", at = @At("RETURN"))
+    private float horseJumpHook(float original) {
+        return PerfectHorseJump.modifiedHorseJump(original);
+    }
+
+    @Inject(method = "tick", at = @At("HEAD"))
+    private void invMoveHook(CallbackInfo ci) {
+        InventoryMove.moveFreely();
+    }
+
+    @WrapOperation(method = "sendChanges", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/multiplayer/ClientPacketListener;send(Lnet/minecraft/network/protocol/Packet;)V"))
+    private void krs$sendPassengerRotation(ClientPacketListener instance, Packet<?> packet, Operation<Void> original) {
+        if (!(packet instanceof ServerboundMovePlayerPacket.Rot)) {
+            original.call(instance, packet);
+            return;
+        }
+
+        MotionEvent event = new MotionEvent(this.getX(), this.getY(), this.getZ(), this.getYRot(), this.getXRot(), this.onGround(), true, false, false);
+        float vanillaYaw = event.yaw;
+        float vanillaPitch = event.pitch;
+
+        if (Client.eventManager != null) Client.eventManager.call(event);
+        if (event.isCancelled()) return;
+        boolean eventRotationChanged = event.yaw != vanillaYaw || event.pitch != vanillaPitch;
+        if (Client.rotationManager != null && (Client.rotationManager.isRotating() || eventRotationChanged)) {
+            float[] fixedRotation = Client.rotationManager.normalizeRotation(event.yaw, event.pitch, this.yRotLast, this.xRotLast);
+            event.yaw = fixedRotation[0];
+            event.pitch = fixedRotation[1];
+        }
+
+        original.call(instance, new ServerboundMovePlayerPacket.Rot(event.yaw, event.pitch, this.onGround(), this.horizontalCollision));
+        this.yRotLast = event.yaw;
+        this.xRotLast = event.pitch;
+
+        MotionEvent postEvent = new MotionEvent(event.x, event.y, event.z, event.yaw, event.pitch, this.onGround(), false, false, true);
+        if (Client.eventManager != null && event.callInPost) Client.eventManager.call(postEvent);
+
+        if (Client.rotationManager != null) Client.rotationManager.postMotionVisualTick();
+    }
+
+    @Inject(method = "sendPosition", at = @At("HEAD"), cancellable = true)
+    private void krs$sendPosition(CallbackInfo ci) {
+        ci.cancel();
+
+        this.sendIsSprintingIfNeeded();
+
+        if (this.isControlledCamera()) {
+            MotionEvent event = new MotionEvent(this.getX(), this.getY(), this.getZ(), this.getYRot(), this.getXRot(), this.onGround(), false, false, false);
+
+            double initialXDiff = event.x - this.xLast;
+            double initialYDiff = event.y - this.yLast;
+            double initialZDiff = event.z - this.zLast;
+            double initialYawDiff = (double) (event.yaw - this.yRotLast);
+            double initialPitchDiff = (double) (event.pitch - this.xRotLast);
+            ++this.positionReminder;
+            boolean initialPositionChanged = Mth.lengthSquared(initialXDiff, initialYDiff, initialZDiff) > Mth.square(2.0E-4) || this.positionReminder >= 20;
+            boolean initialRotationChanged = initialYawDiff != 0.0 || initialPitchDiff != 0.0;
+            float vanillaYaw = event.yaw;
+            float vanillaPitch = event.pitch;
+
+            event.isMoving = initialPositionChanged || initialRotationChanged;
+
+            if (Client.eventManager != null) Client.eventManager.call(event);
+            if (event.isCancelled()) return;
+            boolean eventRotationChanged = event.yaw != vanillaYaw || event.pitch != vanillaPitch;
+            if (Client.rotationManager != null && (Client.rotationManager.isRotating() || eventRotationChanged)) {
+                float[] fixedRotation = Client.rotationManager.normalizeRotation(event.yaw, event.pitch, this.yRotLast, this.xRotLast);
+                event.yaw = fixedRotation[0];
+                event.pitch = fixedRotation[1];
+            }
+
+            double finalXDiff = event.x - this.xLast;
+            double finalYDiff = event.y - this.yLast;
+            double finalZDiff = event.z - this.zLast;
+            double finalYawDiff = (double) (event.yaw - this.yRotLast);
+            double finalPitchDiff = (double) (event.pitch - this.xRotLast);
+            boolean positionChanged = Mth.lengthSquared(finalXDiff, finalYDiff, finalZDiff) > Mth.square(2.0E-4) || this.positionReminder >= 20;
+            boolean rotationChanged = finalYawDiff != 0.0 || finalPitchDiff != 0.0;
+            boolean movementSuppressed = (initialPositionChanged || initialRotationChanged) && !event.isMoving;
+            boolean shouldSendMovePacket = !movementSuppressed && (positionChanged || rotationChanged);
+
+            if (positionChanged && rotationChanged && shouldSendMovePacket) {
+                this.connection.send(new ServerboundMovePlayerPacket.PosRot(event.x, event.y, event.z, event.yaw, event.pitch, event.onGround, this.horizontalCollision));
+            } else if (positionChanged && shouldSendMovePacket) {
+                this.connection.send(new ServerboundMovePlayerPacket.Pos(event.x, event.y, event.z, event.onGround, this.horizontalCollision));
+            } else if (rotationChanged && shouldSendMovePacket) {
+                this.connection.send(new ServerboundMovePlayerPacket.Rot(event.yaw, event.pitch, event.onGround, this.horizontalCollision));
+            } else if (this.lastOnGround != event.onGround || this.lastHorizontalCollision != this.horizontalCollision) {
+                this.connection.send(new ServerboundMovePlayerPacket.StatusOnly(event.onGround, this.horizontalCollision));
+            }
+
+            if (positionChanged) {
+                this.xLast = event.x;
+                this.yLast = event.y;
+                this.zLast = event.z;
+                this.positionReminder = 0;
+            }
+
+            if (rotationChanged) {
+                this.yRotLast = event.yaw;
+                this.xRotLast = event.pitch;
+            }
+
+            this.lastOnGround = event.onGround;
+            this.lastHorizontalCollision = this.horizontalCollision;
+            this.autoJumpEnabled = (Boolean) this.minecraft.options.autoJump().get();
+
+            MotionEvent postEvent = new MotionEvent(event.x, event.y, event.z, event.yaw, event.pitch, event.onGround, false, false, true);
+            if (Client.eventManager != null && event.callInPost) Client.eventManager.call(postEvent);
+
+            Client.rotationManager.postMotionVisualTick();
+        }
+    }
+}
