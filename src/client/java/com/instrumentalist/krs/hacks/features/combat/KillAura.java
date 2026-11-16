@@ -7,11 +7,13 @@ import com.instrumentalist.krs.Client;
 import com.instrumentalist.krs.events.features.HandleInputEvent;
 import com.instrumentalist.krs.events.features.Render3DEvent;
 import com.instrumentalist.krs.events.features.SendPacketEvent;
+import com.instrumentalist.krs.events.features.TickEvent;
 import com.instrumentalist.krs.hacks.Module;
 import com.instrumentalist.krs.hacks.ModuleCategory;
 import com.instrumentalist.krs.hacks.ModuleManager;
 import com.instrumentalist.krs.hacks.features.movement.NoSlow;
 import com.instrumentalist.krs.utils.entity.EntityExtension;
+import com.instrumentalist.krs.utils.PerspectiveUtil;
 import com.instrumentalist.krs.utils.entity.PlayerUtil;
 import com.instrumentalist.krs.utils.math.BehaviorUtils;
 import com.instrumentalist.krs.utils.math.RandomUtil;
@@ -163,6 +165,12 @@ public class KillAura extends Module {
             "Rotations",
             true
     ).describe("Sends server side rotations while attacking.");
+
+    @Setting
+    private static final BooleanValue autoF5 = new BooleanValue(
+            "Auto F5",
+            false
+    ).describe("Switches to third person while Kill Aura is enabled and restores your view when it is disabled.");
 
     @Setting
     private final FloatValue maxRotationSpeed = new FloatValue(
@@ -483,6 +491,7 @@ public class KillAura extends Module {
 
     @Override
     public void onDisable() {
+        PerspectiveUtil.release(this);
         projectileAttacker.reset(true);
         restoreShieldBreakSlot(true);
         cancelPendingTeleportSequence();
@@ -499,6 +508,12 @@ public class KillAura extends Module {
 
     @Override
     public void onEnable() {
+        PerspectiveUtil.update(this, autoF5.get());
+    }
+
+    @Override
+    public void onTick(TickEvent event) {
+        PerspectiveUtil.update(this, autoF5.get());
     }
 
     @Override

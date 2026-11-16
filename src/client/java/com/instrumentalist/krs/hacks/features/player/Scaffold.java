@@ -26,6 +26,7 @@ import com.instrumentalist.krs.utils.math.RandomUtil;
 import com.instrumentalist.krs.utils.math.RotationScraper;
 import com.instrumentalist.krs.utils.math.TimerUtil;
 import com.instrumentalist.krs.utils.move.InputUtil;
+import com.instrumentalist.krs.utils.PerspectiveUtil;
 import com.instrumentalist.krs.utils.move.MovementUtil;
 import com.instrumentalist.krs.utils.packet.PacketUtil;
 import com.instrumentalist.krs.utils.render.BlockHighlight;
@@ -88,6 +89,7 @@ public class Scaffold extends Module {
     private static final boolean[] SEARCH_PASSES = {true, false};
     private static final int MATH_FACE_SAMPLE_DIVISIONS = 16;
     private static final double AIM_RANDOM_RADIUS = 0.34D;
+    private static final double AIM_RANDOM_ROTATION_WEIGHT = 0.5D;
     private static final double AIM_EDGE_REACH = 0.5D - MATH_SAFE_HIT_INSET;
     private static final float AIM_DIAGONAL_STEP = 45.0F;
     private static final double AIM_DIAGONAL_WEIGHT = 0.6D;
@@ -186,6 +188,10 @@ public class Scaffold extends Module {
     @Setting
     private static final BooleanValue keepYOnlySpeed = new BooleanValue("KeepY Only Speed", true, keepY::get)
             .describe("Only adjusts your speed instead of your position.");
+
+    @Setting
+    private static final BooleanValue autoF5 = new BooleanValue("Auto F5", false)
+            .describe("Switches to third person while Scaffold is enabled and restores your view when it is disabled.");
 
     @Setting
     private static final BooleanValue intelligentPicker = new BooleanValue("Intelligent Picker", true)
@@ -294,6 +300,7 @@ public class Scaffold extends Module {
 
     @Override
     public void onDisable() {
+        PerspectiveUtil.release(this);
         pendingPlacements.clear();
         var player = mc.player;
         if (player != null && mc.level != null) {
@@ -353,6 +360,7 @@ public class Scaffold extends Module {
 
     @Override
     public void onEnable() {
+        PerspectiveUtil.update(this, autoF5.get());
         pendingPlacements.clear();
         var player = mc.player;
         if (player == null || mc.level == null) return;
@@ -720,7 +728,18 @@ public class Scaffold extends Module {
         boolean timingAllowed = towerWhen.get().equalsIgnoreCase("always")
                 || towerWhen.get().equalsIgnoreCase("standing") && !MovementUtil.isMoving()
                 || towerWhen.get().equalsIgnoreCase("moving") && MovementUtil.isMoving();
-        return modeAllowed && timingAllowed && hotbarStackSize > 0 && hasAroundBlock();
+        return modeAllowed && timingAllowed && hotbarStackSize > 0 && hasAroundBlock()
+                && (isStandingOnFullBlock(player) || wasTowering && !player.onGround());
+    }
+
+    private static boolean isStandingOnFullBlock(net.minecraft.client.player.LocalPlayer player) {
+        var level = mc.level;
+        if (player == null || level == null || !player.onGround())
+            return false;
+
+        BlockPos supportPos = player.blockPosition().below();
+        BlockState supportState = level.getBlockState(supportPos);
+        return supportState.isCollisionShapeFullBlock(level, supportPos);
     }
 
     private boolean isTellyUpwardJumpInputActive(net.minecraft.client.player.LocalPlayer player) {
@@ -1224,6 +1243,7 @@ public class Scaffold extends Module {
 
     @Override
     public void onUpdate(UpdateEvent event) {
+        PerspectiveUtil.update(this, autoF5.get());
         var player = mc.player;
         var level = mc.level;
         if (player == null || level == null) return;
@@ -1296,9 +1316,15 @@ public class Scaffold extends Module {
             wasTowering = false;
         }
 
+        if (wasTowering && player.onGround() && !isStandingOnFullBlock(player)) {
+            jumpGround = 0.0;
+            wasTowering = false;
+        }
+
         if (tower.get()
                 && (!towerMode.get().equalsIgnoreCase("hypixel") || !player.hasEffect(MobEffects.JUMP_BOOST) && !ModuleManager.getModuleState(SpeedModule.class) || player.hasEffect(MobEffects.SPEED))
-                && (towerWhen.get().equalsIgnoreCase("always") || towerWhen.get().equalsIgnoreCase("standing") && !MovementUtil.isMoving() || towerWhen.get().equalsIgnoreCase("moving") && MovementUtil.isMoving())) {
+                && (towerWhen.get().equalsIgnoreCase("always") || towerWhen.get().equalsIgnoreCase("standing") && !MovementUtil.isMoving() || towerWhen.get().equalsIgnoreCase("moving") && MovementUtil.isMoving())
+                && (isStandingOnFullBlock(player) || wasTowering && !player.onGround())) {
             if (isTowerJumpInputActive(player)) {
                 if (!towerMode.get().equalsIgnoreCase("hypixel") || player.onGround())
                     wasTowering = true;
@@ -1797,6 +1823,9 @@ public class Scaffold extends Module {
         humanizedMathAimTarget = null;
         humanizedMathAimPos = null;
         humanizedMathAimRefreshTick = Integer.MIN_VALUE;
+        aimTarget = null;
+        aimPos = null;
+        aimRefreshTick = Integer.MIN_VALUE;
     }
 
     private List<BlockPos> buildScaffoldCandidates(BlockPos pos, boolean restricted) {
@@ -2473,12 +2502,10 @@ public class Scaffold extends Module {
 
     private double placementRotationScore(float[] rotations, float currentYaw, float currentPitch) {
         AimMode selectedMode = aimMode();
-        if (selectedMode == AimMode.RANDOM)
-            return 0.0D;
-
         float yawDiff = Math.abs(Mth.wrapDegrees(rotations[0] - currentYaw));
         float pitchDiff = Math.abs(rotations[1] - currentPitch);
-        return yawDiff + pitchDiff + aimAlignmentScore(selectedMode, rotations[0]);
+        double rotationWeight = selectedMode == AimMode.RANDOM ? AIM_RANDOM_ROTATION_WEIGHT : 1.0D;
+        return (yawDiff + pitchDiff) * rotationWeight + aimAlignmentScore(selectedMode, rotations[0]);
     }
 
     private double aimAlignmentScore(AimMode selectedMode, float targetYaw) {
