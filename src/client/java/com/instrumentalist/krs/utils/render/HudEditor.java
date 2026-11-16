@@ -51,6 +51,7 @@ public final class HudEditor {
     private static float panelRowsHeight;
     private static boolean arrayListPanelOpen;
     private static float arrayListScroll;
+    private static boolean notificationPanelOpen;
 
     public enum Element {
         WATERMARK("Watermark"),
@@ -179,6 +180,14 @@ public final class HudEditor {
         save();
     }
 
+    public static void resetElement(Element element) {
+        if (element == null) return;
+        OFFSET_X.remove(element);
+        OFFSET_Y.remove(element);
+        SCALE.remove(element);
+        save();
+    }
+
     private static void clearOffsets() {
         OFFSET_X.clear();
         OFFSET_Y.clear();
@@ -265,6 +274,15 @@ public final class HudEditor {
         float x = NanoVGManager.toScaledMouseX(mouseX);
         float y = NanoVGManager.toScaledMouseY(mouseY);
 
+        if (notificationPanelOpen) {
+            if (button == Keys.MOUSE_BUTTON_RIGHT) {
+                notificationPanelOpen = false;
+                return true;
+            }
+            if (button == Keys.MOUSE_BUTTON_LEFT) return handleNotificationPanelClick(x, y);
+            return true;
+        }
+
         if (arrayListPanelOpen) {
             if (button == Keys.MOUSE_BUTTON_RIGHT) {
                 arrayListPanelOpen = false;
@@ -275,11 +293,19 @@ public final class HudEditor {
         }
 
         if (button == Keys.MOUSE_BUTTON_RIGHT) {
+            Bounds notifications = BOUNDS.get(Element.NOTIFICATIONS);
+            if (notifications != null && notifications.contains(x, y)) {
+                notificationPanelOpen = true;
+                arrayListPanelOpen = false;
+                return true;
+            }
+
             Bounds list = BOUNDS.get(Element.MODULE_LIST);
             if (list != null && list.contains(x, y)) {
                 arrayListPanelOpen = true;
                 arrayListScroll = 0f;
                 panelRowsDirty = true;
+                notificationPanelOpen = false;
                 return true;
             }
             return false;
@@ -369,11 +395,14 @@ public final class HudEditor {
         dragging = null;
         resizing = false;
         arrayListPanelOpen = false;
+        notificationPanelOpen = false;
     }
 
     /** Scrolls the module picker while it is open. */
     public static boolean mouseScrolled(double vertical) {
-        if (!isEditing() || !arrayListPanelOpen) return false;
+        if (!isEditing()) return false;
+        if (notificationPanelOpen) return true;
+        if (!arrayListPanelOpen) return false;
 
         ensurePanelRows();
         arrayListScroll = Math.clamp(arrayListScroll - (float) vertical * PANEL_ROW_HEIGHT,
@@ -383,9 +412,10 @@ public final class HudEditor {
 
     /** Closes the module picker if it is open, so Escape can back out one layer at a time. */
     public static boolean dismissPanel() {
-        if (!arrayListPanelOpen) return false;
+        if (!arrayListPanelOpen && !notificationPanelOpen) return false;
 
         arrayListPanelOpen = false;
+        notificationPanelOpen = false;
         return true;
     }
 
@@ -517,7 +547,7 @@ public final class HudEditor {
     }
 
     public static Pointer pointerAt(double mouseX, double mouseY) {
-        if (!isEditing() || arrayListPanelOpen) return Pointer.NONE;
+        if (!isEditing() || arrayListPanelOpen || notificationPanelOpen) return Pointer.NONE;
 
         float x = NanoVGManager.toScaledMouseX(mouseX);
         float y = NanoVGManager.toScaledMouseY(mouseY);
@@ -611,7 +641,9 @@ public final class HudEditor {
         renderBanner(vg, screenWidth);
 
         if (!DRAW_ORDER.isEmpty()) {
-            if (arrayListPanelOpen)
+            if (notificationPanelOpen)
+                renderNotificationPanel(vg, screenWidth, screenHeight, mouseX, mouseY);
+            else if (arrayListPanelOpen)
                 renderArrayListPanel(vg, screenWidth, screenHeight, mouseX, mouseY);
             return;
         }
@@ -666,6 +698,134 @@ public final class HudEditor {
 
     private static void renderHandle(NVGU vg, float centerX, float centerY, float half, Color color) {
         vg.rectangle(centerX - half, centerY - half, half * 2f, half * 2f, color);
+    }
+
+    private static final int NOTIFICATION_PANEL_ROWS = 11;
+
+    private static boolean handleNotificationPanelClick(float x, float y) {
+        Panel panel = panelLayout();
+        if (!panel.contains(x, y)) {
+            notificationPanelOpen = false;
+            return true;
+        }
+
+        float rowLeft = panel.x() + 8f;
+        float rowWidth = panel.width() - 16f;
+        float contentTop = panel.contentTop();
+        if (x < rowLeft || x > rowLeft + rowWidth
+                || y < contentTop || y > panel.contentBottom())
+            return true;
+
+        int row = (int) ((y - contentTop) / PANEL_ROW_HEIGHT);
+        if (row < 0 || row >= NOTIFICATION_PANEL_ROWS)
+            return true;
+
+        boolean increase = x >= rowLeft + rowWidth * 0.65f;
+        switch (row) {
+            case 0 -> Interface.notifications.set(!Interface.notifications.get());
+            case 1 -> Interface.notificationStack.nextValue();
+            case 2 -> Interface.notificationCombine.set(!Interface.notificationCombine.get());
+            case 3 -> Interface.notificationCombineWindow.set(Math.clamp(
+                    Interface.notificationCombineWindow.get() + (increase ? 250 : -250), 250, 5000));
+            case 4 -> Interface.notificationCorner.nextValue();
+            case 5 -> Interface.notificationWidth.set(Math.clamp(
+                    Interface.notificationWidth.get() + (increase ? 10f : -10f), 120f, 280f));
+            case 6 -> Interface.notificationDuration.set(Math.clamp(
+                    Interface.notificationDuration.get() + (increase ? 500 : -500), 2000, 12000));
+            case 7 -> Interface.notificationMax.set(Math.clamp(
+                    Interface.notificationMax.get() + (increase ? 1 : -1), 1, 10));
+            case 8 -> Interface.notificationProgress.set(!Interface.notificationProgress.get());
+            case 9 -> Interface.notificationIcons.set(!Interface.notificationIcons.get());
+            case 10 -> resetElement(Element.NOTIFICATIONS);
+            default -> {
+            }
+        }
+        return true;
+    }
+
+    private static String notificationRowLabel(int row) {
+        return switch (row) {
+            case 0 -> "Notifications";
+            case 1 -> "Stack Direction";
+            case 2 -> "Combine Similar";
+            case 3 -> "Combine Window";
+            case 4 -> "Corner";
+            case 5 -> "Width";
+            case 6 -> "Duration";
+            case 7 -> "Max Visible";
+            case 8 -> "Progress Bar";
+            case 9 -> "Icons";
+            case 10 -> "Reset Position";
+            default -> "";
+        };
+    }
+
+    private static String notificationRowValue(int row) {
+        return switch (row) {
+            case 0 -> Interface.notifications.get() ? "ON" : "OFF";
+            case 1 -> Interface.notificationStack.get();
+            case 2 -> Interface.notificationCombine.get() ? "ON" : "OFF";
+            case 3 -> Interface.notificationCombineWindow.get() + "ms";
+            case 4 -> Interface.notificationCorner.get();
+            case 5 -> Math.round(Interface.notificationWidth.get()) + "px";
+            case 6 -> String.format(Locale.ROOT, "%.1fs", Interface.notificationDuration.get() / 1000f);
+            case 7 -> Integer.toString(Interface.notificationMax.get());
+            case 8 -> Interface.notificationProgress.get() ? "ON" : "OFF";
+            case 9 -> Interface.notificationIcons.get() ? "ON" : "OFF";
+            case 10 -> "Click";
+            default -> "";
+        };
+    }
+
+    private static void renderNotificationPanel(NVGU vg, float screenWidth, float screenHeight,
+                                                float mouseX, float mouseY) {
+        Panel panel = panelLayout();
+        vg.rectangle(0f, 0f, screenWidth, screenHeight, new Color(0, 0, 0, 110));
+        vg.rectangle(panel.x(), panel.y(), panel.width(), panel.height(), new Color(8, 6, 12, 246));
+
+        float rowLeft = panel.x() + 8f;
+        float rowWidth = panel.width() - 16f;
+        float contentTop = panel.contentTop();
+        for (int row = 0; row < NOTIFICATION_PANEL_ROWS; row++) {
+            float top = contentTop + row * PANEL_ROW_HEIGHT;
+            boolean hovered = mouseX >= rowLeft && mouseX <= rowLeft + rowWidth
+                    && mouseY >= top && mouseY <= top + PANEL_ROW_HEIGHT;
+            if (hovered)
+                vg.rectangle(rowLeft, top, rowWidth, PANEL_ROW_HEIGHT - 1f, new Color(255, 255, 255, 16));
+
+            String label = notificationRowLabel(row);
+            String value = notificationRowValue(row);
+            boolean enabled = switch (row) {
+                case 0 -> Interface.notifications.get();
+                case 2 -> Interface.notificationCombine.get();
+                case 8 -> Interface.notificationProgress.get();
+                case 9 -> Interface.notificationIcons.get();
+                default -> true;
+            };
+            Color labelColor = row == 10 ? NanoVGTheme.accent(220)
+                    : hovered ? NanoVGTheme.text(245) : NanoVGTheme.text(220);
+            NVGFonts.INTER.drawText(label, rowLeft + 5f, top + 4.5f, 8f,
+                    labelColor, Alignment.LEFT_TOP, true);
+            NVGFonts.INTER.drawText(value, rowLeft + rowWidth - 5f, top + 4.5f, 8f,
+                    enabled ? NanoVGTheme.muted(230) : NanoVGTheme.dim(190),
+                    Alignment.RIGHT_TOP, true);
+        }
+
+        vg.rectangle(panel.x(), panel.y(), panel.width(), contentTop - panel.y(), new Color(8, 6, 12, 246));
+        vg.rectangle(panel.x() + 1f, contentTop - 4f, panel.width() - 2f, 1f, new Color(255, 255, 255, 22));
+        NanoVGTheme.drawTrackedText(NVGFonts.INTER_MEDIUM, "NOTIFICATIONS", panel.x() + 12f, panel.y() + 9f,
+                10f, 0.9f, NanoVGTheme.text(245), true);
+        NVGFonts.INTER.drawText("Right click closes", panel.x() + panel.width() - 12f,
+                panel.y() + 10f, 7.5f, NanoVGTheme.dim(215), Alignment.RIGHT_TOP, true);
+
+        vg.rectangle(panel.x(), panel.contentBottom(), panel.width(),
+                panel.y() + panel.height() - panel.contentBottom(), new Color(8, 6, 12, 246));
+        NVGFonts.INTER.drawText("Left click toggles  ·  side click adjusts values",
+                panel.x() + panel.width() / 2f, panel.y() + panel.height() - 14f, 7f,
+                NanoVGTheme.dim(195), Alignment.CENTER_TOP, true);
+
+        vg.roundedRectangleBorder(panel.x(), panel.y(), panel.width(), panel.height(), 0f, 1f,
+                new Color(214, 107, 232, 140), Border.INSIDE);
     }
 
     private static void renderArrayListPanel(NVGU vg, float screenWidth, float screenHeight,
@@ -763,7 +923,7 @@ public final class HudEditor {
                 new Color(214, 107, 232, 120), Border.INSIDE);
         NanoVGTheme.drawTrackedText(NVGFonts.INTER_MEDIUM, "HUD EDITOR", bannerX + 10f,
                 bannerY + 6f, 10f, 0.9f, NanoVGTheme.text(245), true);
-        String hint = "Drag / resize  ·  Right click arraylist  ·  R reset  ·  Esc done";
+        String hint = "Drag / resize  ·  Right click HUD  ·  R reset  ·  Esc done";
         NVGFonts.INTER.drawText(hint, bannerX + bannerWidth - 10f, bannerY + 8f, 7.5f,
                 NanoVGTheme.dim(220), Alignment.RIGHT_TOP, true);
     }

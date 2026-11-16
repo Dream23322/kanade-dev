@@ -187,7 +187,7 @@ public class Interface extends Module {
     ).describe("Shows the tab GUI in the top corner.");
 
     @Setting
-    private final BooleanValue notifications = new BooleanValue(
+    public static final BooleanValue notifications = new BooleanValue(
             "Notifications",
             true
     ).describe("Shows client notifications.");
@@ -236,6 +236,28 @@ public class Interface extends Module {
             "Notification Icons",
             true
     ).describe("Shows a severity icon on each notification.");
+
+    @Setting
+    public static final BooleanValue notificationCombine = new BooleanValue(
+            "Notification Combine",
+            true
+    ).describe("Merges similar notifications into a single card.");
+
+    @Setting
+    public static final IntValue notificationCombineWindow = new IntValue(
+            "Notification Combine Window",
+            1500,
+            250,
+            5000,
+            "ms"
+    ).describe("How long similar notifications can be merged.");
+
+    @Setting
+    public static final ListValue notificationStack = new ListValue(
+            "Notification Stack",
+            new String[]{"Auto", "Up", "Down"},
+            "Auto"
+    ).describe("Direction notifications stack from their anchor. Auto follows the corner.");
 
     @Setting
     private static final BooleanValue scaffoldBlocks = new BooleanValue(
@@ -3623,7 +3645,7 @@ public class Interface extends Module {
                     tabGuiModuleSelectionY = Float.NaN;
                 }
                 final List<Module> tabGuiModulesForDraw = tabGuiModules;
-                if (notifications.get())
+                if (notifications.get() || HudEditor.isEditing())
                     Client.notificationManager.prepareNotifications();
 
                 vg.beginEffectBatch();
@@ -3639,7 +3661,7 @@ public class Interface extends Module {
                     renderSomeInformationEffects(vg, someInformationState);
                 if (moduleInformation.get())
                     renderStyledTextEffects(vg, moduleInformationEntryBuffer);
-                if (notifications.get())
+                if (notifications.get() || HudEditor.isEditing())
                     Client.notificationManager.renderNotificationEffects(vg);
                 if (tabGui.get())
                     renderTabGuiEffects(vg, tabGuiCategories, tabGuiModules);
@@ -3668,7 +3690,7 @@ public class Interface extends Module {
                 if (moduleInformation.get())
                     renderStyledTextBodies(vg, moduleInformationEntryBuffer);
 
-                if (notifications.get())
+                if (notifications.get() || HudEditor.isEditing())
                     HudEditor.withScale(vg, HudEditor.Element.NOTIFICATIONS,
                             () -> Client.notificationManager.renderNotificationBodies(vg));
 

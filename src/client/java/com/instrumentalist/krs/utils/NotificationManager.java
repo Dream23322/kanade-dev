@@ -34,12 +34,13 @@ public class NotificationManager {
     private static final float IN_DURATION_MS = 180f;
     private static final float OUT_DURATION_MS = 220f;
     private static final float STACK_RESPONSE_MS = 60f;
-    private static final int MAX_MESSAGE_LINES = 2;
+    private static final int MAX_MESSAGE_LINES = 3;
 
     private static final Object NOTIFICATION_LOCK = new Object();
     private static final ArrayList<Notification> notifications = new ArrayList<>(MAX_NOTIFICATIONS);
 
     private final ArrayList<Notification> renderEntries = new ArrayList<>(MAX_NOTIFICATIONS);
+    private Notification editorPreview;
     private long lastPrepareNanos;
 
     /** Visual weight of a notification; inferred from the title unless the caller picks one. */
@@ -74,16 +75,77 @@ public class NotificationManager {
     }
 
     public void addNotification(String title, String message, Severity severity) {
+        String cleanTitle = sanitizeText(title, MAX_TITLE_LENGTH);
+        String cleanMessage = sanitizeText(message, MAX_MESSAGE_LENGTH);
         Notification notification = new Notification(
-                sanitizeText(title, MAX_TITLE_LENGTH),
-                sanitizeText(message, MAX_MESSAGE_LENGTH),
+                cleanTitle,
+                cleanMessage,
                 severity == null ? Severity.ACCENT : severity
         );
+        long now = System.nanoTime();
         synchronized (NOTIFICATION_LOCK) {
+            if (Interface.notificationCombine.get()) {
+                Notification existing = findCombineCandidate(cleanTitle, cleanMessage, now);
+                if (existing != null) {
+                    existing.merge(cleanMessage, now);
+                    return;
+                }
+            }
+
             while (notifications.size() >= MAX_NOTIFICATIONS)
                 notifications.removeFirst();
             notifications.add(notification);
         }
+    }
+
+    private static Notification findCombineCandidate(String title, String message, long now) {
+        long windowNanos = Math.max(0L, Interface.notificationCombineWindow.get()) * 1_000_000L;
+        for (int index = notifications.size() - 1; index >= 0; index--) {
+            Notification existing = notifications.get(index);
+            if (!existing.title.equalsIgnoreCase(title))
+                continue;
+            if (now - existing.startTimeNanos > windowNanos)
+                continue;
+            if (existing.isExpired(now, Interface.notificationDuration.get()))
+                continue;
+            if (!canCombineMessages(existing.message, message))
+                continue;
+            return existing;
+        }
+        return null;
+    }
+
+    private static boolean canCombineMessages(String first, String second) {
+        if (first.equals(second))
+            return true;
+        return commonPrefix(first, second).stripTrailing().length() >= 8;
+    }
+
+    private static String combineMessages(String first, String second) {
+        if (first.equals(second) || first.contains(second))
+            return first;
+        if (second.contains(first))
+            return second;
+
+        String prefix = commonPrefix(first, second);
+        if (prefix.stripTrailing().length() >= 8) {
+            String firstSuffix = first.substring(prefix.length()).strip();
+            String secondSuffix = second.substring(prefix.length()).strip();
+            if (!firstSuffix.isEmpty() && !secondSuffix.isEmpty()) {
+                return sanitizeText(prefix.stripTrailing() + " " + firstSuffix + ", " + secondSuffix,
+                        MAX_MESSAGE_LENGTH);
+            }
+        }
+
+        return sanitizeText(first + " · " + second, MAX_MESSAGE_LENGTH);
+    }
+
+    private static String commonPrefix(String first, String second) {
+        int length = Math.min(first.length(), second.length());
+        int index = 0;
+        while (index < length && first.charAt(index) == second.charAt(index))
+            index++;
+        return first.substring(0, index);
     }
 
     public void prepareNotifications() {
@@ -105,6 +167,12 @@ public class NotificationManager {
         float screenHeight = NanoVGManager.getScaledScreenHeight();
         boolean right = !corner.contains("left");
         boolean bottom = corner.contains("bottom");
+        String stackMode = Interface.notificationStack.get().toLowerCase(Locale.ROOT);
+        boolean stackUp = switch (stackMode) {
+            case "up" -> true;
+            case "down" -> false;
+            default -> bottom;
+        };
 
         float offsetX = HudEditor.offsetX(HudEditor.Element.NOTIFICATIONS);
         float offsetY = HudEditor.offsetY(HudEditor.Element.NOTIFICATIONS);
@@ -138,13 +206,14 @@ public class NotificationManager {
                 notification.measure(cardWidth, icons);
                 float height = notification.height(progress);
                 float x = right ? baseX - cardWidth : baseX;
-                float targetY = bottom ? baseY - stackOffset - height : baseY + stackOffset;
-                targetY = Math.max(SCREEN_MARGIN, targetY);
+                float targetY = stackUp ? baseY - stackOffset - height : baseY + stackOffset;
+                targetY = Math.clamp(targetY, SCREEN_MARGIN,
+                        Math.max(SCREEN_MARGIN, screenHeight - height - SCREEN_MARGIN));
 
                 notification.setTargetY(targetY, smoothing);
 
                 float slide = (1f - easeOutCubic(notification.inProgress(now))) * 4f;
-                float y = notification.animatedY() + (bottom ? -slide : slide);
+                float y = notification.animatedY() + (stackUp ? -slide : slide);
 
                 notification.setFrame(x, y, cardWidth, height, alpha,
                         inProgressOf(notification, now, durationMillis), icons, progress);
@@ -157,6 +226,24 @@ public class NotificationManager {
                 stackOffset += height + CARD_GAP;
                 visible++;
             }
+        }
+
+        if (visible == 0 && HudEditor.isEditing()) {
+            if (editorPreview == null)
+                editorPreview = new Notification("Preview", "Right click to customize notifications", Severity.ACCENT);
+
+            editorPreview.measure(cardWidth, icons);
+            float height = editorPreview.height(progress);
+            float x = right ? baseX - cardWidth : baseX;
+            float y = Math.clamp(stackUp ? baseY - height : baseY, SCREEN_MARGIN,
+                    Math.max(SCREEN_MARGIN, screenHeight - height - SCREEN_MARGIN));
+            editorPreview.setFrame(x, y, cardWidth, height, 1f, 1f, icons, progress);
+            renderEntries.add(editorPreview);
+            minX = x;
+            minY = y;
+            maxX = x + cardWidth;
+            maxY = y + height;
+            visible = 1;
         }
 
         if (visible > 0)
@@ -296,9 +383,9 @@ public class NotificationManager {
 
     private static final class Notification {
         private final String title;
-        private final String message;
+        private String message;
         private final Severity severity;
-        private final long startTimeNanos;
+        private long startTimeNanos;
 
         private String displayTitle = "";
         private List<String> messageLines = List.of();
@@ -320,6 +407,12 @@ public class NotificationManager {
             this.message = message;
             this.severity = severity;
             this.startTimeNanos = System.nanoTime();
+        }
+
+        private void merge(String newMessage, long now) {
+            this.message = combineMessages(this.message, newMessage);
+            this.startTimeNanos = now;
+            this.measuredWidth = -1f;
         }
 
         private float elapsedMillis(long now) {
