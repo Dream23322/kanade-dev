@@ -161,6 +161,22 @@ public class FlyModule extends Module {
     public static final BooleanValue ncpDamageBoost = new BooleanValue("NCP Damage Boost", true, () -> flyMode.get().equalsIgnoreCase("ncp boost"))
             .describe("Uses the NCP damage boost.");
 
+    private static boolean pendingSelfDamage = false;
+
+    public static void noteSelfDamage() {
+        pendingSelfDamage = true;
+    }
+
+    public static boolean consumeSelfDamage() {
+        boolean pending = pendingSelfDamage;
+        pendingSelfDamage = false;
+        return pending;
+    }
+
+    public static void clearSelfDamage() {
+        pendingSelfDamage = false;
+    }
+
     public static void onEnableFunctions() {
         if (flyModeManager.currentMode instanceof MatrixFly matrixFly) {
             matrixFly.reset();
@@ -234,6 +250,7 @@ public class FlyModule extends Module {
 
     @Override
     public void onDisable() {
+        clearSelfDamage();
         onDisableFunctions();
     }
 
