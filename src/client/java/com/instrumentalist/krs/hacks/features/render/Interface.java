@@ -104,7 +104,6 @@ public class Interface extends Module {
     private static final Color MODULE_LIST_TEXT_NEUTRAL = new Color(190, 193, 203);
     private static final Color MODULE_LIST_EDGE_NEUTRAL = new Color(205, 209, 220);
     private static final float MODULE_LIST_HORIZONTAL_GRADIENT_SPAN = 220f;
-    private static final float MODULE_LIST_HORIZONTAL_PADDING = 2f;
     private static final float MODULE_LIST_ACCENT_WIDTH = 0.75f;
     private static final int TARGET_HUD_MAX_COLUMNS = 3;
     private static final float WATERMARK_FADE_LENGTH = 0.7f;
@@ -192,6 +191,51 @@ public class Interface extends Module {
             "Notifications",
             true
     ).describe("Shows client notifications.");
+
+    @Setting
+    public static final ListValue notificationCorner = new ListValue(
+            "Notification Corner",
+            new String[]{"Top Right", "Bottom Right", "Top Left", "Bottom Left"},
+            "Top Right"
+    ).describe("Screen corner the notifications stack from.");
+
+    @Setting
+    public static final FloatValue notificationWidth = new FloatValue(
+            "Notification Width",
+            190f,
+            120f,
+            280f,
+            "px"
+    ).describe("Maximum width of a notification card.");
+
+    @Setting
+    public static final IntValue notificationDuration = new IntValue(
+            "Notification Duration",
+            6000,
+            2000,
+            12000,
+            "ms"
+    ).describe("How long a notification stays before fading out.");
+
+    @Setting
+    public static final IntValue notificationMax = new IntValue(
+            "Notification Max",
+            5,
+            1,
+            10
+    ).describe("How many notifications are shown at once.");
+
+    @Setting
+    public static final BooleanValue notificationProgress = new BooleanValue(
+            "Notification Progress",
+            true
+    ).describe("Draws a remaining time bar on each notification.");
+
+    @Setting
+    public static final BooleanValue notificationIcons = new BooleanValue(
+            "Notification Icons",
+            true
+    ).describe("Shows a severity icon on each notification.");
 
     @Setting
     private static final BooleanValue scaffoldBlocks = new BooleanValue(
@@ -313,6 +357,15 @@ public class Interface extends Module {
             4f,
             "x"
     ).describe("Extra vertical padding on each module list row.");
+
+    @Setting
+    private static final FloatValue moduleListPadding = new FloatValue(
+            "Module List Padding",
+            2f,
+            0f,
+            16f,
+            "px"
+    ).describe("Horizontal space between the module list border and its text.");
 
     public static List<Module> sortedModules;
 
@@ -1749,9 +1802,9 @@ public class Interface extends Module {
         float gridHeight = usedRows * TARGET_HUD_HEIGHT + gap * (usedRows - 1);
 
         // Anchor on the first card so extra targets grow right/down without moving the ones already shown.
-        float anchorX = isTargetHud2D()
-                ? (screenWidth - ordered.get(0).hudWidth) / 2f
-                : ordered.get(0).hudX;
+        // Its hudX/hudY already contain the layout editor offsets in both 2D and 3D mode, so they must not
+        // be recomputed here or a dragged card snaps back to its default spot.
+        float anchorX = ordered.get(0).hudX;
         float originX = Math.clamp(anchorX, TARGET_HUD_SCREEN_MARGIN,
                 Math.max(TARGET_HUD_SCREEN_MARGIN, screenWidth - TARGET_HUD_SCREEN_MARGIN - gridWidth));
         float originY = Math.clamp(ordered.get(0).hudY, TARGET_HUD_SCREEN_MARGIN,
@@ -3041,7 +3094,7 @@ public class Interface extends Module {
         float rowPadding = 0.5f + Math.max(0f, moduleListSpacing.get());
         float rowHeight = fontHeight + rowPadding * 2f;
         float rightMargin = -HudEditor.offsetX(HudEditor.Element.MODULE_LIST);
-        float horizontalPadding = MODULE_LIST_HORIZONTAL_PADDING;
+        float horizontalPadding = Math.max(0f, moduleListPadding.get());
         float rightX = screenWidth - rightMargin;
         int visibleCount = countVisibleModuleListEntries(entries, rowHeight);
 
@@ -3616,7 +3669,8 @@ public class Interface extends Module {
                     renderStyledTextBodies(vg, moduleInformationEntryBuffer);
 
                 if (notifications.get())
-                    Client.notificationManager.renderNotificationBodies(vg);
+                    HudEditor.withScale(vg, HudEditor.Element.NOTIFICATIONS,
+                            () -> Client.notificationManager.renderNotificationBodies(vg));
 
                 if (tabGui.get())
                     HudEditor.withScale(vg, HudEditor.Element.TAB_GUI,

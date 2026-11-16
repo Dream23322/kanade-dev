@@ -60,6 +60,7 @@ public final class HudEditor {
         MINIMAP("Minimap"),
         MODULE_LIST("Module List"),
         TARGET_HUD("Target HUD"),
+        NOTIFICATIONS("Notifications"),
         SOME_INFO("Info");
 
         private final String label;
