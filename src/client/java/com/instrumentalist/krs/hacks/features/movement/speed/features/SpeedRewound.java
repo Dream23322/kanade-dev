@@ -38,6 +38,7 @@ public class SpeedRewound implements SpeedEvent {
     private boolean slowHop;
     private boolean slowAfterSetback;
     private long lastSetback = System.currentTimeMillis();
+    private double lastMoveY = Double.NaN;
 
     @Override
     public String getName() {
@@ -53,6 +54,7 @@ public class SpeedRewound implements SpeedEvent {
         slowHop = false;
         slowAfterSetback = false;
         lastSetback = System.currentTimeMillis();
+        lastMoveY = Double.NaN;
     }
 
     private boolean isTowering() {
@@ -77,9 +79,14 @@ public class SpeedRewound implements SpeedEvent {
 
     @Override
     public void onPlayerMove(PlayerMoveEvent event) {
-        if (mc.player == null || event.type != MoverType.SELF || isTowering()) return;
+        if (mc.player == null) return;
 
         LocalPlayer player = mc.player;
+        // The move event fires before the move is applied and yo is already the current position,
+        // so the step height has to come from the displacement since the previous move.
+        double deltaY = takeVerticalDisplacement(player);
+
+        if (event.type != MoverType.SELF || isTowering()) return;
 
         collided = collided || player.horizontalCollision;
         if (collided) {
@@ -88,7 +95,7 @@ public class SpeedRewound implements SpeedEvent {
             TimerUtil.timerSpeed = 1.2f;
         }
 
-        trackStep(player);
+        trackStep(deltaY);
 
         stairTicks = Math.max(stairTicks - 1, 0);
         hopLoad = Math.max(hopLoad - (hopLoad > 1.0 ? 0.12 : 0.11), 0.0);
@@ -133,13 +140,18 @@ public class SpeedRewound implements SpeedEvent {
         }
     }
 
+    private double takeVerticalDisplacement(LocalPlayer player) {
+        double y = player.getY();
+        double deltaY = Double.isNaN(lastMoveY) ? 0.0 : y - lastMoveY;
+        lastMoveY = y;
+        return deltaY;
+    }
+
     /**
      * Stand-in for LiquidBounce's step success event, which Kanade does not have: the step height
-     * shows up as the previous tick's vertical displacement.
+     * shows up as the vertical displacement of the previous move.
      */
-    private void trackStep(LocalPlayer player) {
-        double deltaY = player.getY() - player.yo;
-
+    private void trackStep(double deltaY) {
         if (deltaY > 0.7)
             hopLoad = 0.0;
 
