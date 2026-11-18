@@ -19,6 +19,7 @@ public class MMCFly extends Module {
 
     public MMCFly() {
         super("MMC Fly", ModuleCategory.Dev, Keys.KEY_UNKNOWN, false, true);
+        hidden = true;
     }
 
     private int tick;

@@ -1,6 +1,7 @@
 package com.instrumentalist.krs.utils.packet;
 
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket;
 import net.minecraft.network.protocol.game.ServerboundClientTickEndPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 
@@ -20,6 +21,13 @@ public final class MovePlayerPacketFixer {
         }
 
         if (packet instanceof ServerboundClientTickEndPacket) {
+            positionSentThisTick = false;
+            return;
+        }
+
+        // The teleport acknowledgement must go out immediately; closing the tick first can make
+        // Grim treat the teleport as ignored. The teleport resets the position state anyway.
+        if (packet instanceof ServerboundAcceptTeleportationPacket) {
             positionSentThisTick = false;
             return;
         }

@@ -11,6 +11,7 @@ import com.instrumentalist.krs.utils.network.FileUtil;
 import com.instrumentalist.krs.utils.render.custommodel.ModelDownloader;
 import com.instrumentalist.krs.utils.network.WebAccessUtil;
 import com.instrumentalist.krs.utils.NotificationManager;
+import com.instrumentalist.krs.utils.entity.SkinLayerToggler;
 import com.instrumentalist.krs.utils.nanovg.NanoVGManager;
 import com.instrumentalist.krs.utils.render.GraphicsApiCompatibility;
 import com.instrumentalist.krs.utils.render.HudEditor;
@@ -70,6 +71,7 @@ public class Client implements IMinecraft {
         ModelDownloader.startAsync();
 
         ModuleManager.onInitialize();
+        SkinLayerToggler.init();
         ChatUtil.showLog("Initialized Module Manager");
 
         configManager.load();
@@ -89,6 +91,7 @@ public class Client implements IMinecraft {
             return;
 
         loaded = false;
+        shutdownStep("skin layer toggler", SkinLayerToggler::shutdown);
         shutdownStep("main menu audio", CustomTitleScreen::stopMainMenuMusic);
         shutdownStep("modules", ModuleManager::shutdown);
         shutdownStep("configuration network executor", FileUtil.INSTANCE::shutdown);

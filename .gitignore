@@ -44,3 +44,20 @@ replay_*.log
 *.salive
 
 .jdk/
+
+# local runtime
+
+logs/
+crash-reports/
+*.log
+
+# local tooling
+
+.freebuff/
+.cloud-attachments/
+.worktrees/
+
+# windows
+
+Thumbs.db
+desktop.ini

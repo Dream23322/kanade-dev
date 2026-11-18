@@ -18,6 +18,7 @@ import com.instrumentalist.krs.hacks.features.render.*;
 import com.instrumentalist.krs.hacks.features.level.*;
 import com.instrumentalist.krs.hacks.features.level.Timer;
 import com.instrumentalist.krs.utils.ChatUtil;
+import com.instrumentalist.krs.utils.chat.ChatLog;
 import com.instrumentalist.krs.utils.GuiInputBlocker;
 import com.instrumentalist.krs.utils.entity.PlayerUtil;
 import com.instrumentalist.krs.utils.math.BehaviorUtils;
@@ -69,7 +70,7 @@ public class ModuleManager implements EventListener {
 
         modules.addAll(List.of(
                 new SpeedModule(), new FlyModule(), new ElytraFly(), new EntityControl(), new NoBreakCooldown(), new NoPlaceCooldown(),
-                new Interface(), new KillAura(), new SilentAura(), new Backtrack(), new FakeLag(),
+                new Interface(), new Chat(), new KillAura(), new SilentAura(), new Backtrack(), new Displace(), new FakeLag(),
                 new SpinBot(), new BrandSpoofer(), new AntiBot(), new AutoPot(), new Criticals(),
                 new Teams(), new Velocity(), new Phase(), new ServerCrasher(), new Spammer(),
                 new PerfectHorseJump(), new InventoryMove(), new Jesus(), new NoSlow(), new LongJump(),
@@ -96,14 +97,14 @@ public class ModuleManager implements EventListener {
                 new NoBlockEffects(), new AntiLevitation(), new FastFall(),
                 new Spider(), new AutoTotem(), new ItemDropChanger(), new VisualSpoofer(),
                 new XCarry(), new PortalGodMode(), new ChestTP(), new SurroundTP(),
-                new NoBreakReset(), new PacketMine(), new TrueSight(), new AutoTool(), new DurabilityAlert(), new HUDHider(), new LegacyRenderer()
+                new NoBreakReset(), new PacketMine(), new AutoTool(), new DurabilityAlert(), new HUDHider(), new LegacyRenderer()
         ));
 
         devModules.addAll(List.of(
                 new SigmaBitcoinMiner(), new TargetUUIDDebugger(), new NoMoreAutism(), new ChatExceptionChecker(),
                 new BlueMapPlayerTracker(), new MovementDebugger(), new MMCFly(), new TrySex(),
                 new VeinMiner(), new TunnelMiner(), new GhostHand(),
-                new LengBreaker(), new Harvester(), new AutoMine(), new AutoToolSaver(), new CityBreaker(), new BreakESP(),
+                new LengBreaker(), new Harvester(), new AutoMine(), new CityBreaker(), new BreakESP(),
                 new AutoWeapon(), new AutoGapple(), new AutoShield(), new TriggerBot(), new AimAssist(),
                 new BowAimbot(), new AntiFireball(), new PopCounter(), new AutoXP(), new CrystalAura()
         ));
@@ -230,6 +231,7 @@ public class ModuleManager implements EventListener {
     }
 
     private void resetWorldState(boolean saveConfig) {
+        ChatLog.clear();
         for (Module module : modules) {
             if (module.tempEnabled && (module instanceof PluginsDetector || module instanceof Blink))
                 module.toggle();

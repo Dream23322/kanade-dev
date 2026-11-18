@@ -26,6 +26,7 @@ public class NoMoreAutism extends Module {
 
     public NoMoreAutism() {
         super("No More Autism", ModuleCategory.Dev, Keys.KEY_UNKNOWN, false, true);
+        hidden = true;
     }
 
     private final Set<String> nWords = new HashSet<>(Set.of(

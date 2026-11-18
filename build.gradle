@@ -28,6 +28,15 @@ configurations {
     clientImplementation.extendsFrom(implementation)
 }
 
+sourceSets {
+    test {
+        compileClasspath += sourceSets.client.output
+        runtimeClasspath += sourceSets.client.output
+        compileClasspath += sourceSets.client.compileClasspath
+        runtimeClasspath += sourceSets.client.runtimeClasspath
+    }
+}
+
 repositories {
     // Add repositories to retrieve artifacts from in here.
     // You should only use this when depending on other mods because
@@ -38,6 +47,10 @@ repositories {
 }
 
 dependencies {
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
     // To change the versions see the gradle.properties file
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
@@ -139,6 +152,10 @@ java {
 
     sourceCompatibility = javaVersion
     targetCompatibility = javaVersion
+}
+
+test {
+    useJUnitPlatform()
 }
 
 jar {

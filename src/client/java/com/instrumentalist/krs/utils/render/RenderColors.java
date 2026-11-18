@@ -13,6 +13,7 @@ public final class RenderColors {
     public static final Color PATH_FINDER = new Color(100, 240, 140);
     public static final Color LOOK_TP = new Color(240, 240, 100);
     public static final Color STALKER = new Color(80, 255, 210);
+    public static final Color DISPLACE = new Color(255, 255, 255);
     public static final Color CHEST_TP = new Color(255, 200, 80);
     public static final Color SURROUND_TP = new Color(175, 125, 255);
 

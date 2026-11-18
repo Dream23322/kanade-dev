@@ -16,6 +16,7 @@ public class TargetUUIDDebugger extends Module {
 
     public TargetUUIDDebugger() {
         super("Target UUID Debugger", ModuleCategory.Dev, Keys.KEY_UNKNOWN, false, true);
+        hidden = true;
     }
 
     @Override

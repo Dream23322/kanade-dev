@@ -63,6 +63,7 @@ public final class HudEditor {
         MODULE_LIST("Module List"),
         TARGET_HUD("Target HUD"),
         NOTIFICATIONS("Notifications"),
+        CHAT("Chat"),
         SOME_INFO("Info");
 
         private final String label;
@@ -451,7 +452,7 @@ public final class HudEditor {
         for (ModuleCategory category : ModuleCategory.DISPLAY_ORDER) {
             List<Module> group = new ArrayList<>();
             for (Module module : ModuleManager.allModules)
-                if (module.moduleCategory == category) group.add(module);
+                if (!module.hidden && module.moduleCategory == category) group.add(module);
             if (group.isEmpty()) continue;
 
             group.sort(Comparator.comparing(module -> module.moduleName, String.CASE_INSENSITIVE_ORDER));

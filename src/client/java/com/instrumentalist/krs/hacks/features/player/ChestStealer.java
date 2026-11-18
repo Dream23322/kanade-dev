@@ -8,6 +8,7 @@ import com.instrumentalist.krs.events.features.WorldEvent;
 import com.instrumentalist.krs.hacks.Module;
 import com.instrumentalist.krs.hacks.ModuleCategory;
 import com.instrumentalist.krs.hacks.ModuleManager;
+import com.instrumentalist.krs.hacks.features.movement.speed.SpeedModule;
 import com.instrumentalist.krs.utils.math.RandomUtil;
 import com.instrumentalist.krs.utils.math.ToolUtil;
 import com.instrumentalist.krs.utils.nanovg.NVGFonts;
@@ -54,6 +55,10 @@ public class ChestStealer extends Module {
     @Setting
     public static final BooleanValue blink = new BooleanValue("Blink", false)
             .describe("Blinks while looting so your movement looks still.");
+
+    @Setting
+    public static final BooleanValue pauseSpeed = new BooleanValue("Pause Speed", true)
+            .describe("Pauses Speed while looting, but still lets you move.");
 
     @Setting
     private static final BooleanValue cameraMove = new BooleanValue("Camera Move", false)
@@ -179,6 +184,8 @@ public class ChestStealer extends Module {
         var gameMode = mc.gameMode;
         if (player == null || gameMode == null) return;
 
+        syncSpeedPause();
+
         if (!silent.get())
             closeSilentContainer();
 
@@ -251,6 +258,7 @@ public class ChestStealer extends Module {
 
     private void beginLoot(ChestMenu menu) {
         looting = true;
+        syncSpeedPause();
         lootTotal = 0;
         lootStolen = 0;
         barProgress = 0f;
@@ -267,10 +275,15 @@ public class ChestStealer extends Module {
     private void endLoot() {
         lootTarget = null;
         looting = false;
+        syncSpeedPause();
         lootTotal = 0;
         lootStolen = 0;
         barProgress = 0f;
         barVisible = false;
+    }
+
+    private void syncSpeedPause() {
+        SpeedModule.setPaused(pauseSpeed.get() && looting);
     }
 
     private static BlockPos hitContainerTarget() {

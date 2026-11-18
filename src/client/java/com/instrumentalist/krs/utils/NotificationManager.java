@@ -1,6 +1,8 @@
 package com.instrumentalist.krs.utils;
 
+import com.instrumentalist.krs.hacks.features.render.Chat;
 import com.instrumentalist.krs.hacks.features.render.Interface;
+import com.instrumentalist.krs.utils.chat.ClientTag;
 import com.instrumentalist.krs.utils.nanovg.MaterialIcon;
 import com.instrumentalist.krs.utils.nanovg.NanoVGManager;
 import com.instrumentalist.krs.utils.nanovg.NVGFonts;
@@ -76,12 +78,26 @@ public class NotificationManager {
     }
 
     public void addNotification(String title, String message, Severity severity) {
+        addNotification(title, message, severity, false);
+    }
+
+    /** Alert card rendered as {@code kanade | message} with the white glow pass. */
+    public void addChatNotification(String message) {
+        addChatNotification(message, Severity.ACCENT);
+    }
+
+    public void addChatNotification(String message, Severity severity) {
+        addNotification("", message, severity, true);
+    }
+
+    public void addNotification(String title, String message, Severity severity, boolean chatTag) {
         String cleanTitle = sanitizeText(title, MAX_TITLE_LENGTH);
         String cleanMessage = sanitizeText(message, MAX_MESSAGE_LENGTH);
         Notification notification = new Notification(
                 cleanTitle,
                 cleanMessage,
-                severity == null ? Severity.ACCENT : severity
+                severity == null ? Severity.ACCENT : severity,
+                chatTag
         );
         long now = System.nanoTime();
         synchronized (NOTIFICATION_LOCK) {
@@ -380,19 +396,25 @@ public class NotificationManager {
     }
 
     private static List<String> wrapMessage(NVGFont font, String text, float size, float maxWidth, int maxLines) {
+        return wrapMessage(font, text, size, maxWidth, maxLines, maxWidth);
+    }
+
+    private static List<String> wrapMessage(NVGFont font, String text, float size, float maxWidth, int maxLines,
+                                            float firstWidth) {
         if (text == null || text.isEmpty())
             return List.of();
 
         String[] words = text.split("\\s+");
         List<String> lines = new ArrayList<>(maxLines);
         StringBuilder current = new StringBuilder();
+        float limit = firstWidth;
         int index = 0;
 
         while (index < words.length) {
             String word = words[index];
             String candidate = current.length() == 0 ? word : current + " " + word;
 
-            if (current.length() == 0 || font.getWidth(candidate, size) <= maxWidth) {
+            if (current.length() == 0 || font.getWidth(candidate, size) <= limit) {
                 current.setLength(0);
                 current.append(candidate);
                 index++;
@@ -401,6 +423,7 @@ public class NotificationManager {
 
             lines.add(current.toString());
             current.setLength(0);
+            limit = maxWidth;
             if (lines.size() == maxLines)
                 break;
         }
@@ -423,6 +446,7 @@ public class NotificationManager {
         private final String title;
         private String message;
         private final Severity severity;
+        private final boolean chatTag;
         private long startTimeNanos;
 
         private String displayTitle = "";
@@ -441,9 +465,14 @@ public class NotificationManager {
         private boolean progressBar;
 
         private Notification(String title, String message, Severity severity) {
+            this(title, message, severity, false);
+        }
+
+        private Notification(String title, String message, Severity severity, boolean chatTag) {
             this.title = title;
             this.message = message;
             this.severity = severity;
+            this.chatTag = chatTag;
             this.startTimeNanos = System.nanoTime();
         }
 
@@ -481,14 +510,27 @@ public class NotificationManager {
             measuredIcons = icons;
 
             float textWidth = Math.max(16f, cardWidth - CARD_PADDING_X * 2f - (icons ? ICON_SIZE + ICON_GAP : 0f));
-            displayTitle = ellipsizeTracked(title.toUpperCase(Locale.ROOT), TITLE_SIZE, TITLE_TRACKING, textWidth);
-            messageLines = wrapMessage(NVGFonts.INTER, message, MESSAGE_SIZE, textWidth, MAX_MESSAGE_LINES);
+            if (chatTag) {
+                displayTitle = "";
+                messageLines = wrapMessage(NVGFonts.INTER, message, MESSAGE_SIZE, textWidth, MAX_MESSAGE_LINES,
+                        Math.max(24f, textWidth - ClientTag.width(MESSAGE_SIZE)));
+            } else {
+                displayTitle = ellipsizeTracked(title.toUpperCase(Locale.ROOT), TITLE_SIZE, TITLE_TRACKING, textWidth);
+                messageLines = wrapMessage(NVGFonts.INTER, message, MESSAGE_SIZE, textWidth, MAX_MESSAGE_LINES);
+            }
         }
 
         private float height(boolean progress) {
-            float height = CARD_PADDING_Y * 2f + NVGFonts.INTER_MEDIUM.getHeight(TITLE_SIZE);
-            if (!messageLines.isEmpty())
-                height += MESSAGE_GAP + messageLines.size() * NVGFonts.INTER.getHeight(MESSAGE_SIZE);
+            float height;
+            if (chatTag) {
+                height = CARD_PADDING_Y * 2f;
+                if (!messageLines.isEmpty())
+                    height += messageLines.size() * NVGFonts.INTER.getHeight(MESSAGE_SIZE);
+            } else {
+                height = CARD_PADDING_Y * 2f + NVGFonts.INTER_MEDIUM.getHeight(TITLE_SIZE);
+                if (!messageLines.isEmpty())
+                    height += MESSAGE_GAP + messageLines.size() * NVGFonts.INTER.getHeight(MESSAGE_SIZE);
+            }
             if (progress)
                 height += PROGRESS_HEIGHT;
             return height;
@@ -520,7 +562,25 @@ public class NotificationManager {
         }
 
         private void renderEffects(NVGU vg) {
-            // Flat cards, like the rest of the HUD: the client avoids liquid-glass passes outside the menu.
+            if (!chatTag || !Chat.glow.get() || alpha <= 0.002f || width <= 0f || height <= 0f)
+                return;
+
+            float speed = Chat.pulseSpeed.get();
+            float pulse = speed <= 0.01f
+                    ? 1f
+                    : 0.78f + 0.22f * (float) Math.sin(System.nanoTime() / 1_000_000_000.0 * speed * Math.PI);
+            float intensity = Chat.glowIntensity.get() * pulse;
+            float radius = NanoVGTheme.RADIUS_LABEL;
+
+            for (int layer = 3; layer >= 1; layer--) {
+                float spread = layer * 1.8f;
+                int alphaInt = Math.clamp(Math.round(alpha * 255f * 0.07f * intensity), 0, 255);
+                if (alphaInt <= 1)
+                    continue;
+
+                vg.roundedRectangle(x - spread, y - spread, width + spread * 2f, height + spread * 2f,
+                        radius + spread, new Color(255, 255, 255, alphaInt));
+            }
         }
 
         private void renderBody(NVGU vg) {
@@ -532,7 +592,14 @@ public class NotificationManager {
             NanoVGTheme.renderCompact(vg, x, y, width, height, radius, alpha, 40);
             NanoVGTheme.renderEdge(vg, x, y, width, height, radius, alpha * 0.8f);
 
-            vg.rectangle(x, y, 2f, height, severity.color(Math.min(255, Math.round(alphaInt * 0.9f))));
+            int barAlpha = Math.min(255, Math.round(alphaInt * 0.9f));
+            vg.rectangle(x, y, 2f, height,
+                    chatTag ? NanoVGTheme.accent(barAlpha) : severity.color(barAlpha));
+
+            if (chatTag) {
+                renderChatTagBody(vg, alphaInt);
+                return;
+            }
 
             float titleY = y + CARD_PADDING_Y - 0.5f;
             float textX = x + CARD_PADDING_X;
@@ -554,6 +621,30 @@ public class NotificationManager {
             for (int line = 0; line < messageLines.size(); line++) {
                 NVGFonts.INTER.drawText(messageLines.get(line), textX, lineY + line * lineHeight,
                         MESSAGE_SIZE, NanoVGTheme.muted(messageAlpha), Alignment.LEFT_TOP, true);
+            }
+
+            if (progressBar && lifetime > 0f) {
+                float barWidth = Math.max(0f, (width - 2f) * lifetime);
+                if (barWidth > 0.5f)
+                    NanoVGTheme.renderAccentUnderline(vg, x + 2f, y + height - PROGRESS_HEIGHT,
+                            barWidth, PROGRESS_HEIGHT, alpha);
+            }
+        }
+
+        /** {@code kanade | player64 has failed Scaffold (x54)} row for chat alerts. */
+        private void renderChatTagBody(NVGU vg, int alphaInt) {
+            float lineY = y + CARD_PADDING_Y - 0.5f;
+            float textX = x + CARD_PADDING_X + (icons ? ICON_SIZE + ICON_GAP : 0f);
+            float lineHeight = NVGFonts.INTER.getHeight(MESSAGE_SIZE);
+            int messageAlpha = Math.min(255, Math.round(alphaInt * 0.95f));
+
+            if (!messageLines.isEmpty()) {
+                float tagAdvance = ClientTag.render(vg, textX, lineY, MESSAGE_SIZE, alpha);
+                NVGFonts.INTER.drawText(messageLines.get(0), textX + tagAdvance, lineY,
+                        MESSAGE_SIZE, NanoVGTheme.text(messageAlpha), Alignment.LEFT_TOP, true);
+                for (int line = 1; line < messageLines.size(); line++)
+                    NVGFonts.INTER.drawText(messageLines.get(line), textX, lineY + line * lineHeight,
+                            MESSAGE_SIZE, NanoVGTheme.text(messageAlpha), Alignment.LEFT_TOP, true);
             }
 
             if (progressBar && lifetime > 0f) {

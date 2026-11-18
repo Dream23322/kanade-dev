@@ -16,6 +16,7 @@
     "CameraMixin",
     "CapeFeatureRendererMixin",
     "ChatComponentAccessor",
+    "ChatComponentMixin",
     "ChatScreenAccessor",
     "ChatScreenMixin",
     "ChunkOcclusionGraphBuilderMixin",

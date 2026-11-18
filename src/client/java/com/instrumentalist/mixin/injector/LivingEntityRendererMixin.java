@@ -3,7 +3,7 @@ package com.instrumentalist.mixin.injector;
 import com.instrumentalist.krs.Client;
 import com.instrumentalist.krs.hacks.ModuleManager;
 import com.instrumentalist.krs.hacks.features.render.ServerRotations;
-import com.instrumentalist.krs.hacks.features.render.TrueSight;
+import com.instrumentalist.krs.hacks.features.render.Camera;
 import com.instrumentalist.krs.utils.render.GuiEntityRenderGuard;
 import com.instrumentalist.krs.utils.render.custommodel.CustomModelRenderer;
 import com.instrumentalist.mixin.oringo.IEntityRenderState;
@@ -68,11 +68,11 @@ public abstract class LivingEntityRendererMixin {
             at = @At("HEAD")
     )
     private void krs$revealInvisibleEntities(LivingEntityRenderState state, PoseStack matrices, SubmitNodeCollector submitter, CameraRenderState cameraState, CallbackInfo ci) {
-        if (!ModuleManager.getModuleState(TrueSight.class) || !TrueSight.entities.get())
+        if (!ModuleManager.getModuleState(Camera.class) || !Camera.entities.get())
             return;
 
         Entity entity = ((IEntityRenderState) state).client$getEntity();
-        if (!TrueSight.requiresTrueSight(entity))
+        if (!Camera.requiresTrueSight(entity))
             return;
 
         state.isInvisible = false;

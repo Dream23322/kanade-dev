@@ -46,11 +46,11 @@ public final class ModuleTags {
     static {
         // Client side or invisible to the server, fair to use in either era.
         tag(BOTH_PVP, GHOST,
-                Ambience.class, AntiBlind.class, Camera.class, Capes.class, ClickGui.class,
+                Ambience.class, AntiBlind.class, Camera.class, Capes.class, Chat.class, ClickGui.class,
                 CustomModel.class, ESP.class, FullBright.class, HUDHider.class, ImGui.class,
                 Interface.class, KillEffect.class, LegacyRenderer.class, NoRender.class,
                 Pointers.class, ServerRotations.class, TargetHud.class, ThunderDetector.class, Trails.class,
-                TrueSight.class, ViewModel.class, Zoom.class,
+                ViewModel.class, Zoom.class,
                 AntiCheatDetector.class, CaveFinder.class, NoBlockEffects.class, NoteBot.class,
                 QuickMacro.class, Spammer.class,
                 PluginsDetector.class,
@@ -78,7 +78,7 @@ public final class ModuleTags {
                 LongJump.class, NoSlow.class, PerfectHorseJump.class, Spider.class, Step.class,
                 AutoTool.class, ChestAura.class, ChestStealer.class, FastBreak.class, FastLadder.class,
                 InvManager.class, NoFall.class, Phase.class, Scaffold.class, SneakSpam.class,
-                SpinBot.class, LookTP.class);
+                SpinBot.class, LookTP.class, Displace.class);
 
         // Packet based reach extensions: usable as a ghost feature, but obviously blatant to a spectator.
         tag(BOTH_PVP, BOTH_VIS, Backtrack.class, FakeLag.class);
@@ -92,7 +92,7 @@ public final class ModuleTags {
                 MaceExploit.class, AlwaysRiptide.class, AntiLevitation.class, AntiVoid.class,
                 NoJumpCooldown.class,
                 AimAssist.class, AntiFireball.class, AutoGapple.class, AutoMine.class, AutoShield.class,
-                AutoToolSaver.class, AutoWeapon.class, AutoXP.class, BlueMapPlayerTracker.class,
+                AutoWeapon.class, AutoXP.class, BlueMapPlayerTracker.class,
                 BowAimbot.class, BreakESP.class, ChatExceptionChecker.class, CityBreaker.class,
                 CrystalAura.class, GhostHand.class, Harvester.class, LengBreaker.class, MMCFly.class,
                 MovementDebugger.class, NoMoreAutism.class, PianoProGamer.class, PopCounter.class,

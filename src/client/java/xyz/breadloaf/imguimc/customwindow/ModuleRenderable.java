@@ -156,7 +156,7 @@ public class ModuleRenderable implements Renderable, IMinecraft {
     private void renderCategoryModules(ModuleCategory category) {
         if (imgui.ImGui.beginChild("ModuleList##" + category.name(), 0, imgui.ImGui.getContentRegionAvailY(), false)) {
             for (Module module : ModuleManager.allModules) {
-                if (module.moduleCategory != category) continue;
+                if (module.hidden || module.moduleCategory != category) continue;
                 renderModuleEntry(module);
             }
         }
@@ -171,7 +171,7 @@ public class ModuleRenderable implements Renderable, IMinecraft {
             String query = searchQuery.get().toLowerCase().replace(" ", "");
             List<Module> searchResults = new ArrayList<>();
             for (Module module : ModuleManager.allModules) {
-                if (module.moduleCategory == null || module.moduleCategory == ModuleCategory.Dev) continue;
+                if (module.hidden || module.moduleCategory == null || module.moduleCategory == ModuleCategory.Dev) continue;
                 if (query.isEmpty() || module.moduleName.replace(" ", "").toLowerCase().contains(query) || module.moduleCategory.name().toLowerCase().contains(query))
                     searchResults.add(module);
             }

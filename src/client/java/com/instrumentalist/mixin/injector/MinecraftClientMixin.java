@@ -22,7 +22,7 @@ import com.instrumentalist.krs.hacks.features.dev.GhostHand;
 import com.instrumentalist.krs.utils.world.QueuedMiner;
 import com.instrumentalist.krs.utils.navigation.Navigator;
 import com.instrumentalist.krs.hacks.features.dev.AutoMine;
-import com.instrumentalist.krs.hacks.features.dev.AutoToolSaver;
+import com.instrumentalist.krs.hacks.features.player.AutoTool;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import com.instrumentalist.krs.hacks.features.render.ViewModel;
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
@@ -151,13 +151,13 @@ public abstract class MinecraftClientMixin implements IMinecraft {
         if (QueuedMiner.shouldSuppressManualMining()
                 || Navigator.suppressManualMining()
                 || AutoMine.shouldSuppressManualMining()
-                || breaking && AutoToolSaver.shouldBlockMining(this.hitResult))
+                || breaking && AutoTool.shouldBlockMining(this.hitResult))
             ci.cancel();
     }
 
     @Inject(method = "startAttack", at = @At("HEAD"), cancellable = true)
     private void toolSaverStartAttackHook(CallbackInfoReturnable<Boolean> cir) {
-        if (AutoToolSaver.shouldBlockMining(this.hitResult))
+        if (AutoTool.shouldBlockMining(this.hitResult))
             cir.setReturnValue(false);
     }
 

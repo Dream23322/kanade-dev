@@ -14,9 +14,12 @@ import java.lang.annotation.Target;
 public abstract class Module implements EventListener {
     public final String moduleName;
     public final ModuleCategory moduleCategory;
+    public final int defaultKey;
     public int key;
     public volatile boolean tempEnabled;
     public boolean showOnArray;
+    /** Kept out of module pickers while remaining registered and configurable. */
+    public boolean hidden;
     private boolean disposing;
 
     public ConfigObject configObject = new ConfigObject(this);
@@ -29,6 +32,7 @@ public abstract class Module implements EventListener {
     public Module(String moduleName, ModuleCategory moduleCategory, int key, boolean tempEnabled, boolean showOnArray) {
         this.moduleName = moduleName;
         this.moduleCategory = moduleCategory;
+        this.defaultKey = key;
         this.key = key;
         this.tempEnabled = tempEnabled;
         this.showOnArray = showOnArray;
@@ -123,6 +127,11 @@ public abstract class Module implements EventListener {
                 Client.eventManager.unregister(this);
             disposing = false;
         }
+    }
+
+    /** Maps setting names saved by older versions onto their current names. */
+    public String migrateSettingName(String name) {
+        return name;
     }
 
     public String description() {

@@ -8,7 +8,6 @@ import com.instrumentalist.krs.events.features.WorldEvent;
 import com.instrumentalist.krs.hacks.Module;
 import com.instrumentalist.krs.hacks.ModuleCategory;
 import com.instrumentalist.krs.hacks.ModuleManager;
-import com.instrumentalist.krs.hacks.features.dev.AutoToolSaver;
 import com.instrumentalist.krs.hacks.features.player.AutoTool;
 import com.instrumentalist.krs.hacks.features.player.Scaffold;
 import com.instrumentalist.krs.utils.entity.PlayerUtil;
@@ -231,7 +230,7 @@ public abstract class QueuedMiner extends Module {
                     break;
 
                 selectTool(player, next);
-                if (AutoToolSaver.isAboutToBreak(player.getMainHandItem())) {
+                if (AutoTool.isAboutToBreak(player.getMainHandItem())) {
                     queue.put(next, System.currentTimeMillis());
                     stopWork();
                     return;
@@ -260,7 +259,7 @@ public abstract class QueuedMiner extends Module {
 
         activeMiner = this;
         selectTool(player, current);
-        if (AutoToolSaver.isAboutToBreak(player.getMainHandItem())) {
+        if (AutoTool.isAboutToBreak(player.getMainHandItem())) {
             BlockPos keep = current;
             abortCurrent();
             queue.put(keep, System.currentTimeMillis());

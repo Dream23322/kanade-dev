@@ -15,6 +15,7 @@ import com.instrumentalist.krs.utils.input.Keys;
 import com.instrumentalist.krs.utils.math.BehaviorUtils;
 import com.instrumentalist.krs.utils.math.RandomUtil;
 import com.instrumentalist.krs.utils.math.ToolUtil;
+import com.instrumentalist.krs.utils.packet.ServerPositionTracker;
 import com.instrumentalist.krs.utils.render.PathLines;
 import com.instrumentalist.krs.utils.render.TargetBoxRenderer;
 import com.instrumentalist.krs.utils.rotation.HumanAim;
@@ -31,6 +32,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
@@ -51,6 +53,7 @@ import java.util.Random;
 public class SilentAura extends Module {
     private static final Object TARGET_LINE = new Object();
     private static final int DEFAULT_SWITCH_COOLDOWN = 10;
+    private static final double SERVER_REACH_SAFETY = 0.1D;
 
     private static boolean freeLooking;
     private static boolean cameraAnchored;
@@ -167,6 +170,10 @@ public class SilentAura extends Module {
     @Setting
     private final BooleanValue onlyPlayers = new BooleanValue("Only Players", true, () -> isPage("Aim"))
             .describe("Only target players.");
+
+    @Setting
+    private final BooleanValue workWithBacktrack = new BooleanValue("Work with Backtrack", true, () -> isPage("Aim"))
+            .describe("Keep aiming and triggering while Backtrack is enabled.");
 
     // ===================== TRIGGER =====================
 
@@ -456,6 +463,12 @@ public class SilentAura extends Module {
     // ===================== AIM =====================
 
     private LivingEntity aimAt(LocalPlayer player) {
+        if (backtrackConflict()) {
+            engagement.residualYaw = 0f;
+            engagement.residualPitch = 0f;
+            return null;
+        }
+
         if (mc.gui.screen() != null
                 || player.isSpectator()
                 || moduleConflict()
@@ -666,6 +679,7 @@ public class SilentAura extends Module {
                 || player.isSpectator()
                 || mc.gameMode.getPlayerMode() == GameType.SPECTATOR
                 || moduleConflict()
+                || backtrackConflict()
                 || (pauseOnManual.get() && mc.options.keyAttack.isDown()))
             return;
 
@@ -726,17 +740,56 @@ public class SilentAura extends Module {
         attack(target, player);
     }
 
+    /**
+     * Finds the entity the crosshair is on with our own ray instead of vanilla's pick.
+     *
+     * <p>Vanilla only refreshes {@code mc.hitResult} once per tick from the rotation that was
+     * current when the pick ran, and it stops at the interaction range. While the aim curve is
+     * still settling between two frames the pick therefore reports air, which left the trigger
+     * idling even though the crosshair was already on the target.</p>
+     */
     private LivingEntity crosshairTarget() {
-        HitResult hit = mc.hitResult;
-        if (hit == null || hit.getType() != HitResult.Type.ENTITY)
+        LocalPlayer player = mc.player;
+        if (player == null || mc.level == null)
             return null;
 
-        Entity entity = ((EntityHitResult) hit).getEntity();
-        return entity instanceof LivingEntity living ? living : null;
+        Vec3 eye = player.getEyePosition();
+        Vec3 look = Vec3.directionFromRotation(player.getXRot(), player.getYRot());
+        double rayLength = Math.max(triggerRange.get(), player.entityInteractionRange()) + 1.0d;
+        Vec3 end = eye.add(look.scale(rayLength));
+
+        LivingEntity best = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (Entity entity : mc.level.entitiesForRendering()) {
+            if (!(entity instanceof LivingEntity living) || living == player || !living.isAlive())
+                continue;
+            if (player.distanceTo(living) > rayLength)
+                continue;
+            if (!throughWalls.get() && !player.hasLineOfSight(living))
+                continue;
+
+            AABB box = living.getBoundingBox().inflate(living.getPickRadius());
+            Vec3 hit = box.clip(eye, end).orElse(null);
+            if (hit == null)
+                continue;
+
+            double distance = hit.distanceToSqr(eye);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = living;
+            }
+        }
+
+        return best;
     }
 
     private void attack(LivingEntity target, LocalPlayer player) {
         if (mc.gameMode == null || target == null || !target.isAlive())
+            return;
+        // FakeLag can leave the server's player position behind, and Backtrack can leave the
+        // client's target position behind. Validate against both server-known positions so the
+        // attack packet never travels farther than the server will accept.
+        if (!isServerReach(target, player))
             return;
 
         mc.gameMode.attack(player, target);
@@ -745,6 +798,39 @@ public class SilentAura extends Module {
         combatTicks = 0;
         waitingShieldTarget = -1;
         shieldReactTicks = 0;
+    }
+
+    private boolean isServerReach(LivingEntity target, LocalPlayer player) {
+        Vec3 eye = player.getEyePosition();
+        // Only FakeLag makes the client and server player positions diverge enough to matter.
+        boolean fakeLag = ModuleManager.getModuleState(FakeLag.class);
+        Vec3 sentPosition = fakeLag ? ServerPositionTracker.lastSentPosition() : null;
+        if (fakeLag && sentPosition == null)
+            return false;
+        if (sentPosition != null)
+            eye = sentPosition.add(0.0d, player.getEyeHeight(), 0.0d);
+
+        AABB box = target.getBoundingBox();
+        Backtrack backtrack = ModuleManager.getModule(Backtrack.class);
+        Vec3 serverTarget = backtrack != null ? backtrack.getServerPosition(target) : target.position();
+        if (serverTarget != null)
+            box = box.move(serverTarget.subtract(target.position()));
+
+        // Servers measure attack reach from the eye to the closest point of the hitbox, not
+        // along the look ray, and the entity interaction range already carries the Reach module.
+        // Measuring the ray instead made the trigger reject almost every hit at normal combat
+        // distance, because the ray entry point is farther away than the nearest box point.
+        // The unexpanded box keeps the check conservative; the safety margin covers the newest
+        // target packet still in flight when the server processes the attack.
+        double reach = Math.min(triggerRange.get(), player.entityInteractionRange()) - SERVER_REACH_SAFETY;
+        if (!Double.isFinite(reach) || reach <= 0.0d)
+            return false;
+
+        Vec3 closest = new Vec3(
+                Mth.clamp(eye.x, box.minX, box.maxX),
+                Mth.clamp(eye.y, box.minY, box.maxY),
+                Mth.clamp(eye.z, box.minZ, box.maxZ));
+        return eye.distanceToSqr(closest) <= reach * reach;
     }
 
     private boolean shouldCrit(LocalPlayer player) {
@@ -799,6 +885,11 @@ public class SilentAura extends Module {
 
     private boolean moduleConflict() {
         return BehaviorUtils.noKillAura || ModuleManager.getModuleState(KillAura.class);
+    }
+
+    /** Stands the module down while Backtrack is enabled unless it is allowed to work with it. */
+    private boolean backtrackConflict() {
+        return !workWithBacktrack.get() && ModuleManager.getModuleState(Backtrack.class);
     }
 
     private int randomRangeSafe(int first, int second) {

@@ -8,6 +8,7 @@ public class KeyBindValue extends SettingValue<Integer> {
 
     private ChangeListener changeListener;
     private final ConfigStorage configStorage;
+    private final int defaultValue;
 
     public KeyBindValue(String name, int value, DisplayableCondition displayable) {
         this(name, value, displayable, ConfigStorage.MODULE_CONFIG);
@@ -24,10 +25,15 @@ public class KeyBindValue extends SettingValue<Integer> {
     public KeyBindValue(String name, int value, DisplayableCondition displayable, ConfigStorage configStorage) {
         super(name, value, displayable);
         this.configStorage = configStorage != null ? configStorage : ConfigStorage.MODULE_CONFIG;
+        this.defaultValue = value;
     }
 
     public ConfigStorage configStorage() {
         return configStorage;
+    }
+
+    public void resetToDefault() {
+        set(defaultValue);
     }
 
     @Override

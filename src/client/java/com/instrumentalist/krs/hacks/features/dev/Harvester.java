@@ -71,6 +71,7 @@ public class Harvester extends QueuedMiner {
 
     public Harvester() {
         super("Harvester", RenderColors.HARVESTER);
+        hidden = true;
     }
 
     @Override

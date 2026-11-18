@@ -31,6 +31,7 @@ import com.instrumentalist.krs.utils.nanovg.NanoVGTextFormatter;
 import com.instrumentalist.krs.utils.nanovg.NVGFonts;
 import com.instrumentalist.krs.utils.packet.BlinkUtil;
 import com.instrumentalist.krs.screen.NanoVGClickGuiScreen;
+import com.instrumentalist.krs.utils.chat.ChatRenderer;
 import com.instrumentalist.krs.utils.render.HudEditor;
 import com.instrumentalist.krs.utils.render.NanoVGTheme;
 import com.instrumentalist.krs.utils.render.RenderUtil;
@@ -908,7 +909,7 @@ public class Interface extends Module {
 
     private static boolean hasTabGuiModules(ModuleCategory category) {
         for (Module module : ModuleManager.modules) {
-            if (module.moduleCategory == category)
+            if (!module.hidden && module.moduleCategory == category)
                 return true;
         }
         return false;
@@ -1427,6 +1428,9 @@ public class Interface extends Module {
     }
 
     private static float getChatScreenOffset() {
+        if (ChatRenderer.isCustomActive())
+            return ChatRenderer.screenOffset();
+
         if (!(mc.gui.screen() instanceof ChatScreen))
             return 0f;
 
@@ -2865,7 +2869,7 @@ public class Interface extends Module {
         }
 
         for (Module module : ModuleManager.modules) {
-            if (module.moduleCategory == category)
+            if (!module.hidden && module.moduleCategory == category)
                 tabGuiModuleBuffer.add(module);
         }
 
@@ -3685,7 +3689,7 @@ public class Interface extends Module {
         List<ModuleSortEntry> entries = new ArrayList<>();
         moduleListSortWidthCache.clear();
         for (Module module : ModuleManager.allModules) {
-            if (!module.showOnArray)
+            if (module.hidden || !module.showOnArray)
                 continue;
 
             float width = getModuleListWidth(module, fontSize);

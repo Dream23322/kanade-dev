@@ -15,6 +15,7 @@ public class TrySex extends Module {
 
     public TrySex() {
         super("Try Sex", ModuleCategory.Dev, Keys.KEY_UNKNOWN, false, true);
+        hidden = true;
     }
 
     @Override

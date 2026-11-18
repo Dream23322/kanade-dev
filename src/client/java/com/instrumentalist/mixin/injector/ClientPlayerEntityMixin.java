@@ -311,14 +311,16 @@ public abstract class ClientPlayerEntityMixin extends Player {
         }
 
         MotionEvent event = new MotionEvent(this.getX(), this.getY(), this.getZ(), this.getYRot(), this.getXRot(), this.onGround(), true, false, false);
-        float vanillaYaw = event.yaw;
-        float vanillaPitch = event.pitch;
 
         if (Client.eventManager != null) Client.eventManager.call(event);
         if (event.isCancelled()) return;
-        boolean eventRotationChanged = event.yaw != vanillaYaw || event.pitch != vanillaPitch;
-        if (Client.rotationManager != null && (Client.rotationManager.isRotating() || eventRotationChanged)) {
-            float[] fixedRotation = Client.rotationManager.normalizeRotation(event.yaw, event.pitch, this.yRotLast, this.xRotLast);
+
+        // Anchor on the rotation the server already received, so a snap that crosses the yaw
+        // wrap stays on one continuous branch instead of reading as a ~360 degree jump.
+        if (Client.rotationManager != null) {
+            float[] fixedRotation = Client.rotationManager.normalizeRotation(
+                    event.yaw, event.pitch,
+                    Client.rotationManager.getServerYaw(), Client.rotationManager.getServerPitch());
             event.yaw = fixedRotation[0];
             event.pitch = fixedRotation[1];
         }
@@ -350,16 +352,17 @@ public abstract class ClientPlayerEntityMixin extends Player {
             ++this.positionReminder;
             boolean initialPositionChanged = Mth.lengthSquared(initialXDiff, initialYDiff, initialZDiff) > Mth.square(2.0E-4) || this.positionReminder >= 20;
             boolean initialRotationChanged = initialYawDiff != 0.0 || initialPitchDiff != 0.0;
-            float vanillaYaw = event.yaw;
-            float vanillaPitch = event.pitch;
-
             event.isMoving = initialPositionChanged || initialRotationChanged;
 
             if (Client.eventManager != null) Client.eventManager.call(event);
             if (event.isCancelled()) return;
-            boolean eventRotationChanged = event.yaw != vanillaYaw || event.pitch != vanillaPitch;
-            if (Client.rotationManager != null && (Client.rotationManager.isRotating() || eventRotationChanged)) {
-                float[] fixedRotation = Client.rotationManager.normalizeRotation(event.yaw, event.pitch, this.yRotLast, this.xRotLast);
+
+            // Anchor on the rotation the server already received, so a snap that crosses the yaw
+            // wrap stays on one continuous branch instead of reading as a ~360 degree jump.
+            if (Client.rotationManager != null) {
+                float[] fixedRotation = Client.rotationManager.normalizeRotation(
+                        event.yaw, event.pitch,
+                        Client.rotationManager.getServerYaw(), Client.rotationManager.getServerPitch());
                 event.yaw = fixedRotation[0];
                 event.pitch = fixedRotation[1];
             }

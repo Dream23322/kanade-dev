@@ -122,19 +122,26 @@ public class SpeedModeManager {
         updateCurrentMode();
     }
 
+    private static boolean shouldSkipModes() {
+        return ModuleManager.getModuleState(FlyModule.class) || SpeedModule.isPaused();
+    }
+
     public void onUpdate(UpdateEvent event) {
         SpeedEvent mode = currentMode;
-        if (!ModuleManager.getModuleState(FlyModule.class) && mode != null)
+        if (!shouldSkipModes() && mode != null)
             mode.onUpdate(event);
     }
 
     public void onMotion(MotionEvent event) {
         SpeedEvent mode = currentMode;
-        if (!ModuleManager.getModuleState(FlyModule.class) && mode != null)
+        if (!shouldSkipModes() && mode != null)
             mode.onMotion(event);
     }
 
     public void onTick(TickEvent event) {
+        if (SpeedModule.isPaused())
+            return;
+
         SpeedEvent mode = currentMode;
         if (mode == null || !speedMode.get().equals(mode.getName())) {
             SpeedModule.onDisableFunctions();
@@ -149,19 +156,19 @@ public class SpeedModeManager {
 
     public void onSendPacket(SendPacketEvent event) {
         SpeedEvent mode = currentMode;
-        if (!ModuleManager.getModuleState(FlyModule.class) && mode != null)
+        if (!shouldSkipModes() && mode != null)
             mode.onSendPacket(event);
     }
 
     public void onReceivedPacket(ReceivedPacketEvent event) {
         SpeedEvent mode = currentMode;
-        if (!ModuleManager.getModuleState(FlyModule.class) && mode != null)
+        if (!shouldSkipModes() && mode != null)
             mode.onReceivedPacket(event);
     }
 
     public void onPlayerMove(PlayerMoveEvent event) {
         SpeedEvent mode = currentMode;
-        if (!ModuleManager.getModuleState(FlyModule.class) && mode != null)
+        if (!shouldSkipModes() && mode != null)
             mode.onPlayerMove(event);
     }
 }

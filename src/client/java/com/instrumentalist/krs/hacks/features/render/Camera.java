@@ -11,6 +11,8 @@ import com.instrumentalist.krs.utils.value.FloatValue;
 import com.instrumentalist.krs.utils.value.KeyBindValue;
 import net.minecraft.client.CameraType;
 import net.minecraft.util.Mth;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 
 public class Camera extends Module {
     @Setting
@@ -37,6 +39,14 @@ public class Camera extends Module {
     public static final FloatValue noClipDistance = new FloatValue("No Clip Distance", 0f, -4f, 100f, "m", noClip::get)
             .describe("How far the camera is pushed forward through walls.");
 
+    @Setting
+    public static final BooleanValue entities = new BooleanValue("Entities", false)
+            .describe("Shows invisible entities.");
+
+    @Setting
+    public static final BooleanValue barriers = new BooleanValue("Barriers", true)
+            .describe("Shows barrier blocks.");
+
     private static boolean freeLooking;
     private static float lookYaw;
     private static float lookPitch;
@@ -44,7 +54,7 @@ public class Camera extends Module {
 
     @Override
     public String description() {
-        return "Free look, no clip camera and view bobbing tweaks that keep your aim untouched";
+        return "Free look, no clip camera, view bobbing tweaks and true sight that keep your aim untouched";
     }
 
     public Camera() {
@@ -122,5 +132,9 @@ public class Camera extends Module {
             next = next.cycle();
 
         return next;
+    }
+
+    public static boolean requiresTrueSight(Entity entity) {
+        return entity instanceof LivingEntity livingEntity && livingEntity.isInvisible();
     }
 }

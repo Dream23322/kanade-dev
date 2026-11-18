@@ -32,6 +32,26 @@ public class SpeedModule extends Module {
     ).describe("Speed bypass to use.");
 
     private static final SpeedModeManager speedModeManager = new SpeedModeManager(speedMode);
+    private static boolean paused;
+
+    public static boolean isPaused() {
+        return paused;
+    }
+
+    /** Suspends the active mode without touching movement, used while looting. */
+    public static void setPaused(boolean state) {
+        if (paused == state)
+            return;
+
+        paused = state;
+        if (state) {
+            TimerUtil.reset();
+            onDisableFunctions(false);
+        } else {
+            speedModeManager.reload();
+            onEnableFunctions();
+        }
+    }
 
     private static boolean isMode(String mode) {
         return speedMode.get().equalsIgnoreCase(mode);
@@ -122,19 +142,27 @@ public class SpeedModule extends Module {
     }
 
     public static void onDisableFunctions() {
+        onDisableFunctions(true);
+    }
+
+    /**
+     * Resets the active mode. Pausing passes {@code false} so a loot session can
+     * suspend Speed without taking away the player's movement.
+     */
+    public static void onDisableFunctions(boolean stopMovement) {
         if (speedModeManager.currentMode instanceof VanillaSpeed) {
-            if (mc.player != null)
+            if (stopMovement && mc.player != null)
                 MovementUtil.stopMoving();
             VanillaSpeed.cancelledOnce = false;
         } else if (speedModeManager.currentMode instanceof FlagBoostSpeed) {
             FlagBoostSpeed.tick1 = 0;
-            if (mc.player != null)
+            if (stopMovement && mc.player != null)
                 MovementUtil.stopXZ();
         } else if (speedModeManager.currentMode instanceof MinibloxSpeed) {
-            if (mc.player != null)
+            if (stopMovement && mc.player != null)
                 MovementUtil.stopMoving();
         } else if (speedModeManager.currentMode instanceof SpartanV4043FastFallSpeed || speedModeManager.currentMode instanceof CubeCraft20240630Speed) {
-            if (mc.player != null)
+            if (stopMovement && mc.player != null)
                 MovementUtil.stopMoving();
             TimerUtil.reset();
         } else if (speedModeManager.currentMode instanceof VerusB3882Speed
@@ -142,14 +170,14 @@ public class SpeedModule extends Module {
                 || speedModeManager.currentMode instanceof Intave14FastSpeed) {
             TimerUtil.reset();
         } else if (speedModeManager.currentMode instanceof BlocksMCSpeed) {
-            if (mc.player != null)
+            if (stopMovement && mc.player != null)
                 MovementUtil.stopMoving();
         } else if (speedModeManager.currentMode instanceof FiveBFiveTSpeed) {
-            if (mc.player != null)
+            if (stopMovement && mc.player != null)
                 MovementUtil.stopMoving();
             TimerUtil.reset();
         } else if (speedModeManager.currentMode instanceof SpeedRewound) {
-            if (mc.player != null)
+            if (stopMovement && mc.player != null)
                 MovementUtil.stopMoving();
             TimerUtil.reset();
         }

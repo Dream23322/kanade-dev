@@ -26,6 +26,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.inventory.ShulkerBoxMenu;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.ChestBlock;
@@ -33,6 +34,7 @@ import net.minecraft.world.level.block.entity.LidBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.HashMap;
@@ -68,6 +70,10 @@ public class ChestAura extends Module {
     @Setting
     private static final BooleanValue ignoreOpened = new BooleanValue("Ignore Opened", true)
             .describe("Skips chests that are already open with the lid up.");
+
+    @Setting
+    private static final BooleanValue raytrace = new BooleanValue("Raytrace", true)
+            .describe("Only opens chests in direct line of sight and clicks the visible face.");
 
     private final Map<BlockPos, Long> cooldowns = new HashMap<>();
     private final Set<BlockPos> looted = new HashSet<>();
@@ -197,6 +203,13 @@ public class ChestAura extends Module {
             return;
 
         BlockHitResult hit = PlayerUtil.INSTANCE.blockHitResult(target);
+        if (raytrace.get()) {
+            // Use the crosshair's actual hit so the packet carries the face and point the client sees.
+            hit = rotation.rayTraceBlocks(rotation.getClientYaw(), rotation.getClientPitch(), reach(player));
+            if (hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(target))
+                return;
+        }
+
         if (!gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit).consumesAction()) {
             // Do not hammer a chest the server keeps rejecting.
             cooldowns.put(target, System.currentTimeMillis());
@@ -244,6 +257,10 @@ public class ChestAura extends Module {
                     if (playerLimit > 0D && hasPlayerNearby(level, player, blockCenter, playerLimit))
                         continue;
 
+                    // A nearer chest behind a wall would otherwise keep the rotation pinned to it.
+                    if (raytrace.get() && !hasClearLineOfSight(level, player, eyePos, cursor))
+                        continue;
+
                     best = cursor.immutable();
                     bestDistance = distance;
                 }
@@ -251,6 +268,17 @@ public class ChestAura extends Module {
         }
 
         return best;
+    }
+
+    private static boolean hasClearLineOfSight(ClientLevel level, LocalPlayer player, Vec3 eyePos, BlockPos pos) {
+        BlockHitResult hit = level.clip(new ClipContext(
+                eyePos,
+                Vec3.atCenterOf(pos),
+                ClipContext.Block.OUTLINE,
+                ClipContext.Fluid.NONE,
+                player
+        ));
+        return hit.getType() == HitResult.Type.BLOCK && hit.getBlockPos().equals(pos);
     }
 
     private static boolean isContainerBlock(Block block) {

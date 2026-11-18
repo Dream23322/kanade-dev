@@ -2,7 +2,7 @@ package com.instrumentalist.mixin.injector;
 
 import com.instrumentalist.krs.hacks.ModuleManager;
 import com.instrumentalist.krs.hacks.features.render.LegacyRenderer;
-import com.instrumentalist.krs.hacks.features.render.TrueSight;
+import com.instrumentalist.krs.hacks.features.render.Camera;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import net.minecraft.client.OptionInstance;
@@ -51,7 +51,7 @@ public abstract class ClientLevelMixin {
 
     @ModifyReturnValue(method = "getMarkerParticleTarget", at = @At("RETURN"))
     private Block krs$trueSightBarriers(Block original) {
-        if (ModuleManager.getModuleState(TrueSight.class) && TrueSight.barriers.get())
+        if (ModuleManager.getModuleState(Camera.class) && Camera.barriers.get())
             return Blocks.BARRIER;
 
         return original;

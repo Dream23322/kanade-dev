@@ -115,6 +115,15 @@ public class Pointers extends Module {
             "px"
     ).describe("Length of the pointer arrow.");
 
+    @Setting
+    private final FloatValue bloom = new FloatValue(
+            "Bloom",
+            35f,
+            0f,
+            100f,
+            "%"
+    ).describe("Soft glow around each pointer. 0% turns it off.");
+
     private static final float[] SCREEN_PROJECTION = new float[3];
     private static final Map<UUID, PointerSmoother> SMOOTHERS = new HashMap<>();
     private static long lastSmoothingNanos;
@@ -216,6 +225,7 @@ public class Pointers extends Module {
         float ringRadius = radius.get();
         float outerRingRadius = radius2.get();
         float arrowSize = size.get();
+        float bloomIntensity = bloom.get();
         boolean showDistance = distance.get();
         List<PointerTarget> snapshot = List.copyOf(smoothed);
 
@@ -223,7 +233,7 @@ public class Pointers extends Module {
             if (!tempEnabled)
                 return;
             drawPointers(vg, snapshot, circleMode, arrowStyle, ringRadius, outerRingRadius,
-                    arrowSize, maxRange, showDistance);
+                    arrowSize, maxRange, showDistance, bloomIntensity);
         });
     }
 
@@ -294,7 +304,8 @@ public class Pointers extends Module {
 
     private static void drawPointers(NVGU vg, List<PointerTarget> targets, boolean circleMode,
                                      String style, float ringRadius, float outerRingRadius,
-                                     float arrowSize, float maxRange, boolean showDistance) {
+                                     float arrowSize, float maxRange, boolean showDistance,
+                                     float bloomIntensity) {
         float screenWidth = NanoVGManager.getScaledScreenWidth();
         float screenHeight = NanoVGManager.getScaledScreenHeight();
         if (screenWidth < 24f || screenHeight < 24f)
@@ -337,7 +348,8 @@ public class Pointers extends Module {
             float fade = Math.clamp(1f - 0.5f * (target.distance() / Math.max(1f, maxRange)),
                     0.45f, 1f);
             int alpha = Math.max(1, Math.min(255, Math.round(fade * 255f)));
-            drawArrow(vg, x, y, (float) angle - (float) Math.PI * 0.5f, style, arrowSize, alpha);
+            drawArrow(vg, x, y, (float) angle - (float) Math.PI * 0.5f, style, arrowSize, alpha,
+                    bloomIntensity);
             placements.add(new PointerPlacement(target, x, y, alpha));
         }
 
@@ -374,7 +386,7 @@ public class Pointers extends Module {
     }
 
     private static void drawArrow(NVGU vg, float x, float y, float rotation,
-                                  String style, float size, int alpha) {
+                                  String style, float size, int alpha, float bloom) {
         long handle = vg.getHandle();
         Color accent = NanoVGTheme.accent(alpha);
         Color light = lighten(accent, 0.42f);
@@ -385,6 +397,9 @@ public class Pointers extends Module {
         nvgRotate(handle, rotation);
         nvgLineCap(handle, NVG_ROUND);
         nvgLineJoin(handle, NVG_ROUND);
+
+        if (bloom > 0.001f)
+            drawArrowBloom(vg, handle, style, size, alpha, bloom);
 
         switch (style.toLowerCase(Locale.ROOT)) {
             case "chevron" -> drawChevron(vg, size, light);
@@ -462,14 +477,7 @@ public class Pointers extends Module {
         float tailY = size * 0.15f;
 
         drawShadow(vg, handle, size, () -> {
-            nvgBeginPath(handle);
-            nvgMoveTo(handle, tipX, 0f);
-            nvgLineTo(handle, shoulderX, -shoulderY);
-            nvgLineTo(handle, tailX, -tailY);
-            nvgLineTo(handle, notchX, 0f);
-            nvgLineTo(handle, tailX, tailY);
-            nvgLineTo(handle, shoulderX, shoulderY);
-            nvgClosePath(handle);
+            dartPath(handle, size);
             nvgFillColor(handle, vg.createAndStoreColour(new Color(0, 0, 0, 150)));
             nvgFill(handle);
         });
@@ -585,6 +593,24 @@ public class Pointers extends Module {
         nvgStroke(handle);
     }
 
+    private static void dartPath(long handle, float size) {
+        float tipX = size * 0.96f;
+        float shoulderX = size * 0.16f;
+        float tailX = -size * 0.94f;
+        float notchX = -size * 0.55f;
+        float shoulderY = size * 0.32f;
+        float tailY = size * 0.15f;
+
+        nvgBeginPath(handle);
+        nvgMoveTo(handle, tipX, 0f);
+        nvgLineTo(handle, shoulderX, -shoulderY);
+        nvgLineTo(handle, tailX, -tailY);
+        nvgLineTo(handle, notchX, 0f);
+        nvgLineTo(handle, tailX, tailY);
+        nvgLineTo(handle, shoulderX, shoulderY);
+        nvgClosePath(handle);
+    }
+
     private static void paperPlanePath(long handle, float tipX, float tailX, float wingY) {
         nvgBeginPath(handle);
         nvgMoveTo(handle, tipX, 0f);
@@ -604,6 +630,45 @@ public class Pointers extends Module {
         nvgLineTo(handle, notchX, 0f);
         nvgLineTo(handle, tailX, wingY);
         nvgClosePath(handle);
+    }
+
+    private static void drawArrowBloom(NVGU vg, long handle, String style, float size,
+                                       int alpha, float intensity) {
+        float strength = Math.clamp(intensity / 100f, 0f, 1f);
+        if (strength <= 0.001f)
+            return;
+
+        traceArrowPath(handle, style, size);
+        Color outer = NanoVGTheme.accentEnd(255);
+        Color inner = NanoVGTheme.accent(255);
+
+        nvgGlobalCompositeOperation(handle, NVG_LIGHTER);
+        bloomStrokeLayer(handle, vg, size * 0.72f, alpha * strength * 0.06f, outer);
+        bloomStrokeLayer(handle, vg, size * 0.50f, alpha * strength * 0.10f, outer);
+        bloomStrokeLayer(handle, vg, size * 0.30f, alpha * strength * 0.16f, inner);
+        nvgGlobalCompositeOperation(handle, NVG_SOURCE_OVER);
+    }
+
+    private static void traceArrowPath(long handle, String style, float size) {
+        switch (style.toLowerCase(Locale.ROOT)) {
+            case "chevron" -> chevronPath(handle, size * 0.86f, -size * 0.62f, size * 0.64f);
+            case "triangle" -> notchedArrowPath(handle, size * 0.94f, -size * 0.66f,
+                    -size * 0.24f, size * 0.62f);
+            case "dart" -> dartPath(handle, size);
+            case "outline" -> notchedArrowPath(handle, size * 0.92f, -size * 0.64f,
+                    -size * 0.22f, size * 0.6f);
+            default -> paperPlanePath(handle, size * 0.98f, -size * 0.7f, size * 0.6f);
+        }
+    }
+
+    private static void bloomStrokeLayer(long handle, NVGU vg, float width, float alpha, Color color) {
+        int layerAlpha = Math.clamp(Math.round(alpha), 0, 255);
+        if (layerAlpha == 0)
+            return;
+
+        nvgStrokeWidth(handle, width);
+        nvgStrokeColor(handle, vg.createAndStoreColour(withAlpha(color, layerAlpha)));
+        nvgStroke(handle);
     }
 
     private static void drawShadow(NVGU vg, long handle, float size, Runnable draw) {

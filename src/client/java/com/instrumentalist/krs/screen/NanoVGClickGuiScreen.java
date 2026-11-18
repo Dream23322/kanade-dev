@@ -78,6 +78,8 @@ public class NanoVGClickGuiScreen extends Screen {
     private static final float MIN_LAYOUT_SCALE = 0.7f;
     private static final float MAX_LAYOUT_SCALE = 1.5f;
     private static final float LAYOUT_SCALE_STEP = 0.08f;
+    private static final float LAYOUT_SCALE_SMOOTHING = 0.22f;
+    private static final float TAG_TAB_SCALE_FACTOR = 0.75f;
     private static final float BOTTOM_BAR_HEIGHT = 0f;
     // Measured from the full 1920 x 1080 Atmosphere reference, not its cropped close-ups.
     private static final float ATMOSPHERE_COLUMN_SCREEN_RATIO = 150f / 1920f;
@@ -188,6 +190,7 @@ public class NanoVGClickGuiScreen extends Screen {
 
     private ModuleCategory selectedCategory = ModuleCategory.Combat;
     private float layoutScale = 1f;
+    private float targetLayoutScale = 1f;
     private boolean controlHeld;
     private boolean configView;
     private ModuleTags.Pvp pvpTab;
@@ -303,6 +306,7 @@ public class NanoVGClickGuiScreen extends Screen {
         this.returnScreen = returnScreen instanceof NanoVGClickGuiScreen ? null : returnScreen;
         detachedClosingScreen = null;
         this.layoutScale = Math.clamp(rememberedLayoutScale, MIN_LAYOUT_SCALE, MAX_LAYOUT_SCALE);
+        this.targetLayoutScale = this.layoutScale;
         refreshLayoutMetrics();
         restoreUiState();
     }
@@ -662,7 +666,7 @@ public class NanoVGClickGuiScreen extends Screen {
             return true;
 
         if (controlHeld && vertical != 0d) {
-            setLayoutScale(layoutScale + (float) vertical * LAYOUT_SCALE_STEP);
+            setLayoutScale(targetLayoutScale + (float) vertical * LAYOUT_SCALE_STEP);
             return true;
         }
 
@@ -1018,6 +1022,7 @@ public class NanoVGClickGuiScreen extends Screen {
         float delta = updateDelta();
         frameDelta = delta;
         animationFrame++;
+        updateLayoutScale(delta);
         clearFrameLayoutCaches();
         openProgress = stepTowards(openProgress, closing ? 0f : 1f, 0.08f * delta);
         updateSmoothScroll(delta);
@@ -1092,6 +1097,18 @@ public class NanoVGClickGuiScreen extends Screen {
         return Math.round(size * LAYOUT * layoutScale);
     }
 
+    private float tagScale() {
+        return 1f + (layoutScale - 1f) * TAG_TAB_SCALE_FACTOR;
+    }
+
+    private float tagU(float value) {
+        return value * LAYOUT * tagScale();
+    }
+
+    private float tagFont(float size) {
+        return Math.max(1f, Math.round(size * LAYOUT * tagScale()));
+    }
+
     private void refreshLayoutMetrics() {
         topBarHeight = u(38f);
         atmosphereTitleBarHeight = u(24f);
@@ -1123,13 +1140,26 @@ public class NanoVGClickGuiScreen extends Screen {
 
     private void setLayoutScale(float scale) {
         float clamped = Math.clamp(scale, MIN_LAYOUT_SCALE, MAX_LAYOUT_SCALE);
-        if (Math.abs(clamped - layoutScale) < 0.0001f)
+        if (Math.abs(clamped - targetLayoutScale) < 0.0001f)
             return;
 
-        layoutScale = clamped;
+        targetLayoutScale = clamped;
         rememberedLayoutScale = clamped;
+    }
+
+    private void updateLayoutScale(float delta) {
+        if (Math.abs(targetLayoutScale - layoutScale) < 0.0001f) {
+            if (layoutScale != targetLayoutScale) {
+                layoutScale = targetLayoutScale;
+                refreshLayoutMetrics();
+            }
+            return;
+        }
+
+        layoutScale = approach(layoutScale, targetLayoutScale, LAYOUT_SCALE_SMOOTHING * delta);
+        if (Math.abs(targetLayoutScale - layoutScale) < 0.0001f)
+            layoutScale = targetLayoutScale;
         refreshLayoutMetrics();
-        clearFrameLayoutCaches();
     }
 
     private Rect panelBounds(float screenWidth, float screenHeight) {
@@ -2109,28 +2139,28 @@ public class NanoVGClickGuiScreen extends Screen {
     private void renderTagTabs(NVGU vg, float screenWidth) {
         tagTabBounds.clear();
 
-        float panelWidth = Math.min(u(140f), screenWidth - u(16f));
+        float panelWidth = Math.min(tagU(140f), screenWidth - tagU(16f));
         float panelX = (screenWidth - panelWidth) / 2f;
-        float panelY = topBarHeight + u(3f);
-        float headerHeight = u(12f);
-        float outerPadding = u(4f);
-        float rowHeight = u(16f);
-        float rowGap = u(3f);
+        float panelY = topBarHeight + tagU(3f);
+        float headerHeight = tagU(12f);
+        float outerPadding = tagU(4f);
+        float rowHeight = tagU(16f);
+        float rowGap = tagU(3f);
         float rowWidth = panelWidth - outerPadding * 2f;
         float tabWidth = rowWidth / 2f;
-        float firstRowY = panelY + headerHeight + u(3f);
+        float firstRowY = panelY + headerHeight + tagU(3f);
         float secondRowY = firstRowY + rowHeight + rowGap;
-        float panelHeight = headerHeight + u(3f) + rowHeight * 2f + rowGap + u(4f);
+        float panelHeight = headerHeight + tagU(3f) + rowHeight * 2f + rowGap + tagU(4f);
 
         vg.beginEffectBatch();
         vg.blurRoundedRectangle(panelX, panelY, panelWidth, panelHeight, 0f, 10f, 0.92f);
         vg.flushEffectBatch();
         vg.rectangle(panelX, panelY, panelWidth, panelHeight, new Color(15, 16, 21, 176));
-        vg.rectangleBorder(panelX, panelY, panelWidth, panelHeight, u(0.6f),
+        vg.rectangleBorder(panelX, panelY, panelWidth, panelHeight, tagU(0.6f),
                 alpha(255, 255, 255, 24), Border.INSIDE);
-        vg.rectangle(panelX, panelY + headerHeight, panelWidth, u(0.75f),
+        vg.rectangle(panelX, panelY + headerHeight, panelWidth, tagU(0.75f),
                 alpha(255, 255, 255, 22));
-        NVGFonts.INTER_MEDIUM.drawText("Tags", panelX + u(6f), panelY + u(2.5f), font(7f),
+        NVGFonts.INTER_MEDIUM.drawText("Tags", panelX + tagU(6f), panelY + tagU(2.5f), tagFont(7f),
                 NanoVGTheme.text(215), Alignment.LEFT_TOP, true);
 
         Rect firstRow = new Rect(panelX + outerPadding, firstRowY, rowWidth, rowHeight);
@@ -2153,9 +2183,9 @@ public class NanoVGClickGuiScreen extends Screen {
                 null, ModuleTags.Visibility.GHOST);
 
         for (Rect row : new Rect[]{firstRow, secondRow}) {
-            vg.rectangle(row.x, row.y + row.height - u(0.75f), row.width, u(0.75f),
+            vg.rectangle(row.x, row.y + row.height - tagU(0.75f), row.width, tagU(0.75f),
                     alpha(255, 255, 255, 20));
-            vg.rectangle(row.x + row.width / 2f - u(0.35f), row.y, u(0.7f), row.height,
+            vg.rectangle(row.x + row.width / 2f - tagU(0.35f), row.y, tagU(0.7f), row.height,
                     alpha(255, 255, 255, 14));
         }
 
@@ -2175,15 +2205,15 @@ public class NanoVGClickGuiScreen extends Screen {
         if (hovered)
             vg.rectangle(rect.x, rect.y, rect.width, rect.height, alpha(255, 255, 255, 18));
         if (selected || pinned) {
-            float barHeight = Math.max(0f, rect.height - u(2f));
+            float barHeight = Math.max(0f, rect.height - tagU(2f));
             Color bar = selected ? accent
                     : alpha(accent.getRed(), accent.getGreen(), accent.getBlue(), 150);
-            vg.rectangle(rect.x, rect.y + u(1f), u(1.5f), barHeight, bar);
+            vg.rectangle(rect.x, rect.y + tagU(1f), tagU(1.5f), barHeight, bar);
         }
 
         NVGFont labelFont = selected || pinned ? NVGFonts.INTER_MEDIUM : NVGFonts.INTER;
-        float labelSize = font(7f);
-        labelFont.drawText(label, rect.x + u(7f), rect.y + (rect.height - labelSize) / 2f, labelSize,
+        float labelSize = tagFont(7f);
+        labelFont.drawText(label, rect.x + tagU(7f), rect.y + (rect.height - labelSize) / 2f, labelSize,
                 selected ? NanoVGTheme.ACCENT
                         : pinned ? NanoVGTheme.text(235)
                         : hovered ? NanoVGTheme.text(245)
@@ -2417,7 +2447,7 @@ public class NanoVGClickGuiScreen extends Screen {
         String query = normalize(searchQuery);
         List<Module> modules = new ArrayList<>();
         for (Module module : ModuleManager.allModules) {
-            if (module.moduleCategory != category)
+            if (module.hidden || module.moduleCategory != category)
                 continue;
             if (!passesTagFilters(module))
                 continue;
@@ -4470,7 +4500,7 @@ public class NanoVGClickGuiScreen extends Screen {
         List<Module> modules = new ArrayList<>();
 
         for (Module module : ModuleManager.allModules) {
-            if (module.moduleCategory == null) continue;
+            if (module.hidden || module.moduleCategory == null) continue;
             if (!query.isBlank() && module.moduleCategory == ModuleCategory.Dev) continue;
             if (!passesTagFilters(module)) continue;
 

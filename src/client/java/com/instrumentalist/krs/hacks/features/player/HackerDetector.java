@@ -7,7 +7,9 @@ import com.instrumentalist.krs.events.features.UpdateEvent;
 import com.instrumentalist.krs.events.features.WorldEvent;
 import com.instrumentalist.krs.hacks.Module;
 import com.instrumentalist.krs.hacks.ModuleCategory;
+import com.instrumentalist.krs.utils.ChatUtil;
 import com.instrumentalist.krs.utils.input.Keys;
+import com.instrumentalist.krs.utils.value.BooleanValue;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -20,6 +22,12 @@ import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.player.Player;
 
 public class HackerDetector extends Module {
+
+    @Setting
+    public static final BooleanValue checkSelf = new BooleanValue(
+            "Check Self",
+            false
+    ).describe("Also flags your own player, for testing the detector and anticheat checks.");
 
     private final Map<UUID, PlayerState> playerStates = new HashMap<>();
     private final Set<UUID> seenPlayers = new HashSet<>();
@@ -78,7 +86,7 @@ public class HackerDetector extends Module {
         seenPlayers.clear();
 
         for (Player player : mc.level.players()) {
-            if (player instanceof LocalPlayer) continue;
+            if (player instanceof LocalPlayer && !checkSelf.get()) continue;
 
             UUID playerId = player.getUUID();
             seenPlayers.add(playerId);
@@ -107,7 +115,9 @@ public class HackerDetector extends Module {
                 double maxSpeed = isOnGround ? baseSpeed : baseSpeed * 1.5;
 
                 if (distanceXZSqr > maxSpeed * maxSpeed && (currentTime - state.lastAlertTime) >= 5000) {
-                    Client.notificationManager.addNotification("Hacker Detected", player.getName().getString() + " is using speed hack!");
+                    String alert = player.getName().getString() + " is using speed hack!";
+                    ChatUtil.printFlag(alert);
+                    Client.notificationManager.addChatNotification(alert);
                     state.lastAlertTime = currentTime;
                 }
 
@@ -128,7 +138,9 @@ public class HackerDetector extends Module {
                     flyingDuration += deltaTime;
 
                     if (flyingDuration > 2000 && (currentTime - state.lastAlertTime) >= 3000) {
-                        Client.notificationManager.addNotification("Hacker Detected", player.getName().getString() + " is using fly hack!");
+                        String alert = player.getName().getString() + " is using fly hack!";
+                        ChatUtil.printFlag(alert);
+                        Client.notificationManager.addChatNotification(alert);
                         state.lastAlertTime = currentTime;
                         flyingDuration = 0;
                     }

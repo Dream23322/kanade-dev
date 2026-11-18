@@ -115,6 +115,15 @@ public class ConfigObject {
         loadSettings(jsonObject, KeyBindValue.ConfigStorage.BIND_CONFIG, legacyKeys);
     }
 
+    /** Clears bind-only settings before a bind config is applied, so missing entries cannot inherit another config's keys. */
+    public void resetBindSettings() {
+        for (Field field : ModuleManager.getSettings(module)) {
+            if (getFieldValue(field) instanceof KeyBindValue keyBindValue
+                    && keyBindValue.configStorage() == KeyBindValue.ConfigStorage.BIND_CONFIG)
+                keyBindValue.resetToDefault();
+        }
+    }
+
     private void loadSettings(JsonObject jsonObject, KeyBindValue.ConfigStorage configStorage, boolean legacyKeys) {
         JsonElement settings = jsonObject.get("settings");
         if (settings == null || !settings.isJsonArray()) return;
@@ -124,7 +133,7 @@ public class ConfigObject {
             if (!jsonElement.isJsonObject()) return;
 
             jsonElement.getAsJsonObject().entrySet().forEach(entry -> {
-                SettingValue<?> value = settingByName.get(entry.getKey());
+                SettingValue<?> value = settingByName.get(module.migrateSettingName(entry.getKey()));
                 if (value != null && isStoredIn(value, configStorage))
                     loadSettingValue(value, entry.getValue(), legacyKeys);
             });

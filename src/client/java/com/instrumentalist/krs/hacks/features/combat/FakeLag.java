@@ -1,6 +1,7 @@
 package com.instrumentalist.krs.hacks.features.combat;
 
 import com.instrumentalist.krs.Client;
+import com.instrumentalist.krs.events.features.ReceivedPacketEvent;
 import com.instrumentalist.krs.events.features.RenderHudEvent;
 import com.instrumentalist.krs.events.features.SendPacketEvent;
 import com.instrumentalist.krs.events.features.UpdateEvent;
@@ -15,6 +16,7 @@ import com.instrumentalist.krs.utils.math.MSTimer;
 import com.instrumentalist.krs.utils.math.RandomUtil;
 import com.instrumentalist.krs.utils.packet.BlinkUtil;
 import com.instrumentalist.krs.utils.packet.PacketUtil;
+import com.instrumentalist.krs.utils.packet.ServerPositionTracker;
 import com.instrumentalist.krs.utils.render.TargetBoxRenderer;
 import com.instrumentalist.krs.utils.value.BooleanValue;
 import com.instrumentalist.krs.utils.value.FloatValue;
@@ -23,6 +25,11 @@ import com.instrumentalist.krs.utils.value.ListValue;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.common.ServerboundResourcePackPacket;
+import net.minecraft.network.protocol.game.ClientboundExplodePacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.network.protocol.game.ClientboundSetHealthPacket;
+import net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket;
 import net.minecraft.network.protocol.game.ServerboundAttackPacket;
 import net.minecraft.network.protocol.game.ServerboundChatCommandPacket;
 import net.minecraft.network.protocol.game.ServerboundChatPacket;
@@ -40,10 +47,10 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
  * Port of LiquidBounce's FakeLag.
@@ -137,11 +144,10 @@ public class FakeLag extends Module {
             true
     ).describe("Flush held packets before block breaking and similar actions.");
 
-    private final ArrayDeque<QueuedPacket> queue = new ArrayDeque<>();
-    private final Object queueLock = new Object();
+    private final Consumer<Packet<?>> queuedPacketSender;
+    private final FakeLagQueue<Packet<?>> queue;
     private final MSTimer recoilTimer = new MSTimer();
 
-    private volatile boolean flushing;
     private volatile Vec3 serverPosition;
     private int nextDelay = 300;
     private boolean isEnemyNearby;
@@ -157,13 +163,21 @@ public class FakeLag extends Module {
     }
 
     public FakeLag() {
+        this(PacketUtil::sendPacketAsSilent);
+    }
+
+    /** Test seam for driving the real outgoing-packet handler without a live connection. */
+    FakeLag(Consumer<Packet<?>> queuedPacketSender) {
         super("Fake Lag", ModuleCategory.Combat, Keys.KEY_UNKNOWN, false, true);
+        this.queuedPacketSender = queuedPacketSender;
+        this.queue = new FakeLagQueue<>(MAX_QUEUED_PACKETS, this::sendQueued);
     }
 
     @Override
     public void onEnable() {
         nextDelay = rollDelay();
         isEnemyNearby = false;
+        ServerPositionTracker.reset();
         serverPosition = mc.player == null ? null : mc.player.position();
     }
 
@@ -179,22 +193,80 @@ public class FakeLag extends Module {
         dropQueue();
         nextDelay = rollDelay();
         isEnemyNearby = false;
+        ServerPositionTracker.reset();
         serverPosition = mc.player == null ? null : mc.player.position();
     }
 
     @Override
-    public void onSendPacket(SendPacketEvent event) {
-        if (event == null || event.packet == null || event.isCancelled() || flushing)
+    public void onReceivedPacket(ReceivedPacketEvent event) {
+        if (event == null || event.packet == null || mc.player == null)
             return;
-        if (mc.player == null || mc.level == null) {
+
+        Packet<?> packet = event.packet;
+        if (packet instanceof ClientboundPlayerPositionPacket) {
+            // Queued positions are from before the teleport and must not be replayed after it.
+            dropQueue();
+            serverPosition = mc.player.position();
+            ServerPositionTracker.reset();
+            return;
+        }
+
+        // LiquidBounce flushes on damage, knockback, and explosion so the held position is not
+        // sent after the server has already moved or damaged the player.
+        if (packet instanceof ClientboundSetHealthPacket) {
+            flush();
+            return;
+        }
+
+        if (packet instanceof ClientboundSetEntityMotionPacket motion
+                && motion.id() == mc.player.getId()
+                && motion.movement().lengthSqr() > 0.0d) {
+            flush();
+            return;
+        }
+
+        if (packet instanceof ClientboundExplodePacket explosion
+                && explosion.playerKnockback().filter(knockback -> knockback.lengthSqr() > 0.0d).isPresent()) {
+            flush();
+        }
+    }
+
+    @Override
+    public void onSendPacket(SendPacketEvent event) {
+        if (event == null || event.packet == null || event.isCancelled() || queue.isFlushing())
+            return;
+        if (!isReady()) {
             dropQueue();
             return;
         }
 
         Packet<?> packet = event.packet;
 
+        FakeLagQueue.ControlAction controlAction = controlAction(packet);
+        if (controlAction != FakeLagQueue.ControlAction.NONE) {
+            // Teleport acknowledgements drop the queue so old movement is not replayed after
+            // the server has already moved us. The packet itself still passes immediately.
+            queue.handleControl(controlAction, packet, ignored -> { });
+            return;
+        }
+
+        // LiquidBounce does not exempt client tick ends from the queue. Holding the tick end
+        // together with its movement keeps the server's client tick count aligned with the
+        // delayed positions; passing every tick end while holding movement makes the server
+        // process empty ticks and then a position burst, which Grim reports as Simulation.
+
         // BlinkManager still fires the module for these, then lets them through without queueing.
         boolean alwaysPassed = isAlwaysPassed(packet);
+
+        if (shouldFlushOn(packet)) {
+            recoilTimer.reset();
+            // LiquidBounce's BlinkManager default action flushes the held movement before the
+            // attack packet. The current tick's movement and tick end then enter the queue like
+            // any other held tick, matching BlinkManager's ordering.
+            flush();
+            updateServerPosition(packet);
+            return;
+        }
 
         // Returning without QUEUE means BlinkManager's default action, FLUSH.
         if (!canLag()) {
@@ -205,13 +277,6 @@ public class FakeLag extends Module {
 
         if (isAboveTime()) {
             nextDelay = rollDelay();
-            flush();
-            updateServerPosition(packet);
-            return;
-        }
-
-        if (shouldFlushOn(packet)) {
-            recoilTimer.reset();
             flush();
             updateServerPosition(packet);
             return;
@@ -242,13 +307,9 @@ public class FakeLag extends Module {
 
         event.cancel();
 
-        boolean overflow;
-        synchronized (queueLock) {
-            if (queue.isEmpty())
-                serverPosition = mc.player == null ? null : mc.player.position();
-            queue.addLast(new QueuedPacket(packet, System.nanoTime(), queuedPosition(packet)));
-            overflow = queue.size() >= MAX_QUEUED_PACKETS;
-        }
+        if (!queue.hasQueued())
+            serverPosition = mc == null || mc.player == null ? null : mc.player.position();
+        boolean overflow = queue.enqueue(packet, System.nanoTime());
 
         if (overflow)
             flush();
@@ -293,7 +354,8 @@ public class FakeLag extends Module {
     @Override
     public void onRenderHud(RenderHudEvent event) {
         var player = mc.player;
-        if (!render.get() || player == null || Client.nanoVgManager == null)
+        if (!render.get() || player == null || Client.nanoVgManager == null
+                || mc.options.getCameraType().isFirstPerson())
             return;
 
         Vec3 position = serverPosition;
@@ -304,7 +366,11 @@ public class FakeLag extends Module {
                 TargetBoxRenderer.render(player, position, vg, walls.get()));
     }
 
-    private boolean canLag() {
+    boolean isReady() {
+        return mc.player != null && mc.level != null;
+    }
+
+    boolean canLag() {
         if (BlinkUtil.INSTANCE.getBlinking() || ModuleManager.getModuleState(Freecam.class))
             return false;
 
@@ -314,7 +380,7 @@ public class FakeLag extends Module {
         return recoilTimer.hasTimePassed(recoilTime.get());
     }
 
-    private boolean shouldQueue() {
+    boolean shouldQueue() {
         if (!mode.get().equalsIgnoreCase("Dynamic"))
             return true;
 
@@ -395,6 +461,13 @@ public class FakeLag extends Module {
         return flushOnAction.get() && packet instanceof ServerboundPlayerActionPacket;
     }
 
+    static FakeLagQueue.ControlAction controlAction(Packet<?> packet) {
+        if (packet instanceof ServerboundAcceptTeleportationPacket)
+            return FakeLagQueue.ControlAction.DROP_QUEUE;
+
+        return FakeLagQueue.ControlAction.NONE;
+    }
+
     private static boolean isAlwaysPassed(Packet<?> packet) {
         return packet instanceof ClientIntentionPacket
                 || packet instanceof ServerboundStatusRequestPacket
@@ -404,71 +477,43 @@ public class FakeLag extends Module {
     }
 
     private boolean isConsuming() {
-        return mc.player != null
+        return mc != null
+                && mc.player != null
                 && mc.player.isUsingItem()
                 && mc.player.getUseItem().get(DataComponents.CONSUMABLE) != null;
     }
 
     private boolean isAboveTime() {
-        long first;
-        synchronized (queueLock) {
-            QueuedPacket head = queue.peekFirst();
-            if (head == null)
-                return false;
-            first = head.timestampNanos();
-        }
+        long first = queue.firstTimestampNanos();
+        if (first < 0L)
+            return false;
 
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - first) >= nextDelay;
     }
 
     private void flush() {
-        ArrayDeque<QueuedPacket> pending;
-        synchronized (queueLock) {
-            if (queue.isEmpty())
-                return;
-            pending = new ArrayDeque<>(queue);
-            queue.clear();
-        }
+        queue.flush();
+    }
 
-        flushing = true;
-        try {
-            while (!pending.isEmpty()) {
-                QueuedPacket queued = pending.removeFirst();
-                try {
-                    // BlinkManager flushes silently, bypassing packet handlers.
-                    PacketUtil.sendPacketAsSilent(queued.packet());
-                    if (queued.position() != null)
-                        serverPosition = queued.position();
-                } catch (RuntimeException ignored) {
-                    pending.clear();
-                }
-            }
-        } finally {
-            flushing = false;
-        }
+    private void sendQueued(Packet<?> packet) {
+        // BlinkManager flushes silently, bypassing packet handlers.
+        queuedPacketSender.accept(packet);
+        Vec3 position = queuedPosition(packet);
+        if (position != null)
+            serverPosition = position;
     }
 
     private void dropQueue() {
-        synchronized (queueLock) {
-            queue.clear();
-        }
+        queue.drop();
     }
 
     private boolean hasQueuedPackets() {
-        synchronized (queueLock) {
-            return !queue.isEmpty();
-        }
+        return queue.hasQueued();
     }
 
     private Vec3 firstQueuedPosition() {
-        synchronized (queueLock) {
-            for (QueuedPacket queued : queue) {
-                if (queued.position() != null)
-                    return queued.position();
-            }
-        }
-
-        return null;
+        Packet<?> packet = queue.firstMatching(candidate -> queuedPosition(candidate) != null);
+        return packet == null ? null : queuedPosition(packet);
     }
 
     private void updateServerPosition(Packet<?> packet) {
@@ -494,6 +539,4 @@ public class FakeLag extends Module {
         return RandomUtil.nextInt(min, max + 1);
     }
 
-    private record QueuedPacket(Packet<?> packet, long timestampNanos, Vec3 position) {
-    }
 }

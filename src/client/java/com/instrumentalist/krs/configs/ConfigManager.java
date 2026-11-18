@@ -84,7 +84,7 @@ public class ConfigManager implements IMinecraft {
 
         final JsonObject bindObject = new JsonObject();
         bindObject.addProperty(KEY_FORMAT_KEY, KEY_FORMAT_SDL);
-        ModuleManager.modules.forEach(m -> {
+        ModuleManager.allModules.forEach(m -> {
             if (m.configObject != null && m.moduleCategory != null)
                 bindObject.add(m.moduleName, m.configObject.save().getSecond());
         });
@@ -165,6 +165,15 @@ public class ConfigManager implements IMinecraft {
             final JsonObject bindData = readJsonObject(bindFile);
             if (bindData == null) return;
             final boolean legacyKeys = usesLegacyKeyCodes(bindData);
+
+            // A bind config only owns the binds it contains. Reset first so modules
+            // missing from older configs cannot inherit the previously loaded binds.
+            ModuleManager.allModules.forEach(module -> {
+                module.key = module.defaultKey;
+                if (module.configObject != null)
+                    module.configObject.resetBindSettings();
+            });
+
             bindData.entrySet().forEach(entry -> {
                 if (isConfigMetadataKey(entry.getKey()) || !entry.getValue().isJsonObject()) return;
 

@@ -6,6 +6,7 @@ import com.instrumentalist.mixin.injector.LivingEntityAccessor;
 import com.instrumentalist.mixin.injector.SwingStateAccessor;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.protocol.Packet;
@@ -45,6 +46,7 @@ public class RotationManager {
     private boolean returnFramePrepared = false;
     private boolean initialized = false;
     private boolean serverRotationInitialized = false;
+    private LocalPlayer anchoredPlayer;
 
     public RotationManager() {
         if (mc.player != null) {
@@ -569,6 +571,12 @@ public class RotationManager {
         return serverPitch;
     }
 
+    /** The last yaw actually written to the wire; outgoing rotations are projected from it. */
+    public float getServerYaw() {
+        ensureServerRotationInitialized();
+        return serverYaw;
+    }
+
     public float getRotationYaw() {
         return getClientYaw();
     }
@@ -682,6 +690,8 @@ public class RotationManager {
     }
 
     private boolean ensureInitializedFromPlayer() {
+        checkPlayerChange();
+
         if (initialized) {
             return true;
         }
@@ -771,6 +781,8 @@ public class RotationManager {
     }
 
     private boolean ensureServerRotationInitialized() {
+        checkPlayerChange();
+
         if (serverRotationInitialized) {
             return true;
         }
@@ -783,6 +795,25 @@ public class RotationManager {
         serverPitch = mc.player.getXRot();
         serverRotationInitialized = true;
         return true;
+    }
+
+    /**
+     * A join, respawn or server switch creates a new player while the wire anchor was carried
+     * over from the previous one. Without a re-sync the first packets would be projected
+     * against a yaw the new server never received.
+     */
+    private void checkPlayerChange() {
+        LocalPlayer player = mc.player;
+        if (player == null || player == anchoredPlayer)
+            return;
+
+        anchoredPlayer = player;
+        initialized = false;
+        serverRotationInitialized = false;
+        isRotating = false;
+        isReturning = false;
+        returnFramePrepared = false;
+        lastRotationUpdate = 0L;
     }
 
     private void recordServerRotation(float yaw, float pitch) {

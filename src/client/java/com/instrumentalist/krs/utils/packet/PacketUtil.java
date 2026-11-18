@@ -27,6 +27,8 @@ public class PacketUtil implements IMinecraft {
         if (networkHandler == null || packet == null) return;
 
         Packet<?> normalizedPacket = normalizeRotationPacket(packet);
+        // Silent sends bypass the normal send hook, so record their position here as well.
+        ServerPositionTracker.recordOutgoing(normalizedPacket);
         Set<Packet<?>> packetsForThread = SILENT_PACKETS.get();
         if (packetsForThread == null) {
             packetsForThread = Collections.newSetFromMap(new IdentityHashMap<>());

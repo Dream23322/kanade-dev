@@ -5,6 +5,7 @@ import com.instrumentalist.krs.events.features.TickEvent;
 import com.instrumentalist.krs.events.features.WorldEvent;
 import com.instrumentalist.krs.hacks.Module;
 import com.instrumentalist.krs.hacks.ModuleCategory;
+import com.instrumentalist.krs.hacks.features.player.AutoTool;
 import com.instrumentalist.krs.utils.entity.PlayerUtil;
 import com.instrumentalist.krs.utils.input.Keys;
 import com.instrumentalist.krs.utils.value.BooleanValue;
@@ -96,7 +97,7 @@ public class AutoWeapon extends Module {
                 continue;
 
             ItemStack stack = inventory.getItem(slot);
-            if (stack.isEmpty() || AutoToolSaver.isAboutToBreak(stack))
+            if (stack.isEmpty() || AutoTool.isAboutToBreak(stack))
                 continue;
 
             double damage = damage(player, stack, target);
