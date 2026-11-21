@@ -213,9 +213,7 @@ public abstract class CameraMixin implements IMinecraft {
 
     @ModifyArgs(method = "setupPerspective", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/Projection;setupPerspective(FFFFF)V"))
     private void hookWide(Args args) {
-        if (Ambience.isStretch()) {
-            args.set(3, (float) args.get(3) / 2);
-        }
+        args.set(3, Ambience.stretchWidth((float) args.get(3), (float) args.get(4)));
     }
 
     @Inject(at = @At("HEAD"), method = "getFluidInCamera()Lnet/minecraft/world/level/material/FogType;", cancellable = true)

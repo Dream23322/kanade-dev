@@ -1,5 +1,6 @@
 package com.instrumentalist.mixin.injector;
 
+import com.instrumentalist.krs.hacks.features.combat.AutoPot;
 import com.instrumentalist.krs.hacks.features.combat.Velocity;
 import com.instrumentalist.krs.hacks.ModuleManager;
 import com.instrumentalist.krs.hacks.features.movement.MovementFix;
@@ -46,6 +47,7 @@ public abstract class KeyboardInputMixin {
             Scaffold.hookTellyJumpInput(input);
             Scaffold.hookAutoInputFix(input);
             WTap.hookWTapInput(input);
+            AutoPot.hookInput(input);
             return;
         }
 

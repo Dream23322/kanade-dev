@@ -4,7 +4,7 @@ import com.instrumentalist.krs.hacks.Module;
 import com.instrumentalist.krs.hacks.ModuleCategory;
 import com.instrumentalist.krs.hacks.ModuleManager;
 import com.instrumentalist.krs.utils.input.Keys;
-import com.instrumentalist.krs.utils.value.BooleanValue;
+import com.instrumentalist.krs.utils.value.FloatValue;
 import com.instrumentalist.krs.utils.value.ListValue;
 
 import java.util.Locale;
@@ -26,14 +26,27 @@ public class Ambience extends Module {
     ).describe("Time of day rendered on your side.");
 
     @Setting
-    private static final BooleanValue stretch = new BooleanValue("Stretch", false)
-            .describe("Stretches the field of view like the widely putin meme.");
+    private static final ListValue stretch = new ListValue(
+            "Stretch",
+            new String[]{"Off", "4:3", "5:4", "16:10", "16:9", "21:9", "Custom"},
+            "Off"
+    ).describe("Stretches the image horizontally, as if the game rendered at that aspect ratio and was stretched to fill your screen.");
+
+    @Setting
+    private static final FloatValue customStretch = new FloatValue(
+            "Custom Stretch",
+            2f,
+            1f,
+            4f,
+            "x",
+            () -> "Custom".equalsIgnoreCase(stretch.get())
+    ).describe("Horizontal stretch used by the Custom preset. 2x renders at half width.");
 
     private static final Long[] TIME_TICKS = {null, 1000L, 13000L, 18000L, 0L};
 
     @Override
     public String description() {
-        return "Client side weather, time of day and stretched field of view";
+        return "Client side weather, time of day and stretched resolutions";
     }
 
     public Ambience() {
@@ -48,8 +61,28 @@ public class Ambience extends Module {
     public void onDisable() {
     }
 
-    public static boolean isStretch() {
-        return ModuleManager.getModuleState(Ambience.class) && stretch.get();
+    /**
+     * Width the projection should use for the current stretch preset, so the image comes out
+     * stretched horizontally. Presets imitate rendering at that aspect ratio.
+     */
+    public static float stretchWidth(float width, float height) {
+        if (!ModuleManager.getModuleState(Ambience.class) || height <= 0f)
+            return width;
+
+        String mode = stretch.get();
+        if ("Custom".equalsIgnoreCase(mode))
+            return width / Math.max(1f, customStretch.get());
+
+        float targetAspect = switch (mode.toLowerCase(Locale.ROOT)) {
+            case "4:3" -> 4f / 3f;
+            case "5:4" -> 5f / 4f;
+            case "16:10" -> 16f / 10f;
+            case "16:9" -> 16f / 9f;
+            case "21:9" -> 21f / 9f;
+            default -> 0f;
+        };
+
+        return targetAspect <= 0f ? width : height * targetAspect;
     }
 
     public static Long getActiveTimeTicks() {

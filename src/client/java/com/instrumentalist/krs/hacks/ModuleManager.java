@@ -72,6 +72,7 @@ public class ModuleManager implements EventListener {
                 new SpeedModule(), new FlyModule(), new ElytraFly(), new EntityControl(), new NoBreakCooldown(), new NoPlaceCooldown(),
                 new Interface(), new Chat(), new KillAura(), new SilentAura(), new Backtrack(), new Displace(), new FakeLag(),
                 new SpinBot(), new BrandSpoofer(), new AntiBot(), new AutoPot(), new Criticals(),
+                new HvH(),
                 new Teams(), new Velocity(), new Phase(), new ServerCrasher(), new Spammer(),
                 new PerfectHorseJump(), new InventoryMove(), new Jesus(), new NoSlow(), new LongJump(),
                 new ChestStealer(), new ChestAura(), new FastLadder(), new InvManager(), new NoFall(),
@@ -97,7 +98,8 @@ public class ModuleManager implements EventListener {
                 new NoBlockEffects(), new AntiLevitation(), new FastFall(),
                 new Spider(), new AutoTotem(), new ItemDropChanger(), new VisualSpoofer(),
                 new XCarry(), new PortalGodMode(), new ChestTP(), new SurroundTP(),
-                new NoBreakReset(), new PacketMine(), new AutoTool(), new DurabilityAlert(), new HUDHider(), new LegacyRenderer()
+                new NoBreakReset(), new PacketMine(), new AutoTool(), new DurabilityAlert(), new HUDHider(), new LegacyRenderer(),
+                new Vibes()
         ));
 
         devModules.addAll(List.of(

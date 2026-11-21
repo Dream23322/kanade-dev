@@ -38,6 +38,10 @@ public class Criticals extends Module {
     private final BooleanValue cooldownCheck = new BooleanValue("Cooldown Check", false, () -> mode.get().equalsIgnoreCase("packet") || mode.get().equalsIgnoreCase("less packet"))
             .describe("Only spoofs criticals when the attack cooldown is ready.");
 
+    @Setting
+    private final BooleanValue rotationFirst = new BooleanValue("Rotation First", true)
+            .describe("Sends a rotation packet before the critical position packets.");
+
     private final double[] packetValues = new double[]{0.0625D, 0.0D, 0.05D, 0.0D};
     private final double[] lessPacketValues = new double[]{0.0625D, 0.0D};
 
@@ -212,6 +216,14 @@ public class Criticals extends Module {
 
         Vec3 pos = player.position();
         boolean horizontalCollision = player.horizontalCollision;
+
+        if (rotationFirst.get())
+            PacketUtil.sendPacket(new ServerboundMovePlayerPacket.Rot(
+                    player.getYRot(),
+                    player.getXRot(),
+                    player.onGround(),
+                    horizontalCollision
+            ));
 
         switch (mode.get().toLowerCase()) {
             case "packet":

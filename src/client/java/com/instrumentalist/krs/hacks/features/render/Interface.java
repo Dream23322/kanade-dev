@@ -10,6 +10,7 @@ import com.instrumentalist.krs.hacks.ModuleCategory;
 import com.instrumentalist.krs.hacks.ModuleManager;
 import net.minecraft.core.Direction;
 import com.instrumentalist.krs.utils.math.TimerUtil;
+import com.instrumentalist.krs.hacks.features.combat.AutoPot;
 import com.instrumentalist.krs.hacks.features.player.Freecam;
 import com.instrumentalist.krs.hacks.features.exploit.Blink;
 import com.instrumentalist.krs.hacks.features.exploit.disabler.DisablerModule;
@@ -493,7 +494,8 @@ public class Interface extends Module {
     private static final int INFO_BLINKING = 3;
     private static final int INFO_SCAFFOLD_BLOCKS = 4;
     private static final int INFO_MURDERER_COUNT = 5;
-    private static final float[] moduleInformationFadeProgress = new float[6];
+    private static final int INFO_PREPOT = 6;
+    private static final float[] moduleInformationFadeProgress = new float[7];
     private static long hudFrameCounter;
     private static long playerListCacheFrame = -1L;
     private static long playerListNextRefreshNanos;
@@ -2084,6 +2086,12 @@ public class Interface extends Module {
         if (progress > 0f)
             entries.add(new StyledTextRenderEntry("Blinking... " + (Blink.directions.get().equalsIgnoreCase("incoming") ? "(Incoming)" : "(x" + BlinkUtil.INSTANCE.getPacketCount() + ")"), centerX, startY, progress));
         if (blinking) startY -= 40f;
+
+        boolean prepotting = AutoPot.isPrepotting();
+        progress = advanceModuleInformationFade(INFO_PREPOT, prepotting, deltaSpeed);
+        if (progress > 0f)
+            entries.add(new StyledTextRenderEntry("Prepot " + AutoPot.getPrepotDone() + "/" + AutoPot.getPrepotTotal(), centerX, startY, progress));
+        if (prepotting) startY -= 40f;
 
         boolean scaffoldActive = (ModuleManager.getModuleState(Scaffold.class) || ModuleManager.getModuleState(LegitScaffold.class)) && mc.player != null;
         progress = advanceModuleInformationFade(INFO_SCAFFOLD_BLOCKS, scaffoldActive, deltaSpeed);

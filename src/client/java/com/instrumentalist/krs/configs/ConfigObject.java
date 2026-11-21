@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.instrumentalist.krs.hacks.Module;
 import com.instrumentalist.krs.hacks.ModuleManager;
+import com.instrumentalist.krs.hacks.features.combat.HvH;
 import com.instrumentalist.krs.utils.input.Keys;
 import com.instrumentalist.krs.utils.value.*;
 import com.instrumentalist.krs.utils.math.Tuple;
@@ -13,6 +14,7 @@ import java.awt.*;
 import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 
 public class ConfigObject {
 
@@ -25,7 +27,7 @@ public class ConfigObject {
     public Tuple<JsonObject, JsonObject> save() {
         JsonObject jo = new JsonObject();
         JsonObject bjo = new JsonObject();
-        jo.addProperty("toggle", module.tempEnabled);
+        jo.addProperty("toggle", HvH.storedEnabled(module, module.tempEnabled));
         bjo.addProperty("bind", module.key);
         bjo.addProperty("show", module.showOnArray);
         JsonArray moduleSettings = new JsonArray();
@@ -55,6 +57,10 @@ public class ConfigObject {
                     }
                 }
                 if (!jsonObject.isEmpty()) {
+                    Object stored = HvH.storedValue(module, settingValue.name, settingValue.get());
+                    if (stored != null && !Objects.equals(stored, settingValue.get()))
+                        writeStoredValue(jsonObject, settingValue, stored);
+
                     if (isStoredIn(settingValue, KeyBindValue.ConfigStorage.BIND_CONFIG))
                         bindSettings.add(jsonObject);
                     else
@@ -145,6 +151,18 @@ public class ConfigObject {
             return keyBindValue.configStorage() == configStorage;
 
         return configStorage == KeyBindValue.ConfigStorage.MODULE_CONFIG;
+    }
+
+    private static void writeStoredValue(JsonObject jsonObject, SettingValue<?> setting, Object value) {
+        switch (setting) {
+            case TextValue textValue -> jsonObject.addProperty(textValue.name, String.valueOf(value));
+            case BooleanValue booleanValue -> jsonObject.addProperty(booleanValue.name, (Boolean) value);
+            case FloatValue floatValue -> jsonObject.addProperty(floatValue.name, ((Number) value).floatValue());
+            case IntValue intValue -> jsonObject.addProperty(intValue.name, ((Number) value).intValue());
+            case ListValue listValue -> jsonObject.addProperty(listValue.name, String.valueOf(value));
+            default -> {
+            }
+        }
     }
 
     private Object getFieldValue(Field field) {

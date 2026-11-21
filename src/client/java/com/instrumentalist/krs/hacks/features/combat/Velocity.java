@@ -8,11 +8,13 @@ import com.instrumentalist.krs.hacks.features.movement.fly.FlyModule;
 import com.instrumentalist.krs.hacks.features.movement.speed.SpeedModule;
 import com.instrumentalist.krs.utils.move.InputUtil;
 import com.instrumentalist.krs.utils.move.MovementUtil;
+import com.instrumentalist.krs.utils.value.BooleanValue;
 import com.instrumentalist.krs.utils.value.FloatValue;
 import com.instrumentalist.krs.utils.value.IntValue;
 import com.instrumentalist.krs.utils.value.ListValue;
 import net.minecraft.client.player.ClientInput;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 import com.instrumentalist.krs.utils.input.Keys;
 
@@ -24,6 +26,14 @@ public class Velocity extends Module {
     @Setting
     private final ListValue mode = new ListValue("Mode", new String[]{"Standard", "Hypixel NCP", "Jump Reset"}, "Standard")
             .describe("Method used to reduce knockback.");
+
+    @Setting
+    private final FloatValue reduce = new FloatValue("Reduce", 100f, 0f, 100f, "%", this::isStandardMode)
+            .describe("How much of the knockback is removed in Standard mode.");
+
+    @Setting
+    private final BooleanValue onlyWhileFighting = new BooleanValue("Only While Fighting", false, this::isStandardMode)
+            .describe("Only reduces knockback while a fight is in progress.");
 
     @Setting
     private final FloatValue jumpResetChance = new FloatValue("Jump Reset Chance", 100f, 0f, 100f, "%", this::isJumpResetMode)
@@ -116,6 +126,14 @@ public class Velocity extends Module {
         var player = mc.player;
         switch (mode.get().toLowerCase(Locale.ROOT)) {
             case "standard" -> {
+                if (onlyWhileFighting.get() && !isFighting())
+                    return false;
+
+                double keep = 1.0D - Mth.clamp(reduce.get() / 100.0F, 0.0F, 1.0F);
+                if (keep >= 1.0D)
+                    return false;
+                if (keep > 0.0D)
+                    player.setDeltaMovement(player.getDeltaMovement().add(motion.scale(keep)));
                 return true;
             }
             case "hypixel ncp" -> {
@@ -134,6 +152,24 @@ public class Velocity extends Module {
 
     private boolean isJumpResetMode() {
         return mode.get().equalsIgnoreCase("jump reset");
+    }
+
+    private boolean isStandardMode() {
+        return mode.get().equalsIgnoreCase("standard");
+    }
+
+    private boolean isFighting() {
+        var player = mc.player;
+        if (player == null)
+            return false;
+
+        if (player.hurtTime > 0 || KillAura.closestEntity != null)
+            return true;
+
+        SilentAura silentAura = ModuleManager.getModule(SilentAura.class);
+        return silentAura != null
+                && ModuleManager.getModuleState(SilentAura.class)
+                && silentAura.getCurrentTarget() != null;
     }
 
     private void resetJumpReset() {

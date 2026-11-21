@@ -3889,29 +3889,33 @@ public class NanoVGClickGuiScreen extends Screen {
 
     private void renderFloatSetting(NVGU vg, Rect row, FloatValue value) {
         boolean active = textFocus == TextFocus.NUMBER && focusedNumberValue == value;
-        addControl(ControlType.FLOAT_INPUT, row, value, null, 0);
         renderSettingRow(vg, row, value, active ? null : String.format(Locale.ROOT, "%.2f%s", value.get(), value.suffix == null ? "" : value.suffix), 0f);
         if (active) {
+            addControl(ControlType.FLOAT_INPUT, row, value, null, 0);
             renderNumberInput(vg, row, value, value.suffix);
             return;
         }
 
         Rect track = new Rect(row.x + row.width - u(168f), row.y + u(11f), u(102f), u(7f));
+        // The track is registered before the row input so a click on it drags the slider
+        // instead of only focusing the number input.
         addControl(ControlType.FLOAT_SLIDER, track.expand(u(8f), u(10f)), value, null, 0);
+        addControl(ControlType.FLOAT_INPUT, row, value, null, 0);
         drawSlider(vg, track, normalize(value.get(), value.minimum, value.maximum), value, 0);
     }
 
     private void renderIntSetting(NVGU vg, Rect row, IntValue value) {
         boolean active = textFocus == TextFocus.NUMBER && focusedNumberValue == value;
-        addControl(ControlType.INT_INPUT, row, value, null, 0);
         renderSettingRow(vg, row, value, active ? null : value.get() + (value.suffix == null ? "" : value.suffix), 0f);
         if (active) {
+            addControl(ControlType.INT_INPUT, row, value, null, 0);
             renderNumberInput(vg, row, value, value.suffix);
             return;
         }
 
         Rect track = new Rect(row.x + row.width - u(168f), row.y + u(11f), u(102f), u(7f));
         addControl(ControlType.INT_SLIDER, track.expand(u(8f), u(10f)), value, null, 0);
+        addControl(ControlType.INT_INPUT, row, value, null, 0);
         drawSlider(vg, track, normalize(value.get(), value.minimum, value.maximum), value, 0);
     }
 

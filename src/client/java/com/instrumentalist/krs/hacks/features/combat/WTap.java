@@ -6,6 +6,8 @@ import com.instrumentalist.krs.hacks.ModuleCategory;
 import com.instrumentalist.krs.hacks.ModuleManager;
 import com.instrumentalist.krs.hacks.features.movement.MovementFix;
 import com.instrumentalist.krs.utils.math.MSTimer;
+import com.instrumentalist.krs.utils.network.Latency;
+import com.instrumentalist.krs.utils.value.BooleanValue;
 import com.instrumentalist.krs.utils.value.FloatValue;
 import net.minecraft.client.player.ClientInput;
 import net.minecraft.client.player.KeyboardInput;
@@ -21,6 +23,10 @@ public class WTap extends Module {
     @Setting
     private final FloatValue duration = new FloatValue("Duration", 1.5f, 1.0f, 5.0f, "t")
             .describe("How long the sprint reset lasts.");
+
+    @Setting
+    private final BooleanValue pingOffset = new BooleanValue("Ping Offset", true)
+            .describe("Shifts the tap by half your ping so the resprint lands on the server tick.");
 
     private final MSTimer attackTimer = new MSTimer();
     private boolean active = false;
@@ -58,7 +64,8 @@ public class WTap extends Module {
         attackTimer.reset();
         active = true;
         stopForward = false;
-        delayTicks += ticksToMillis(delay.get());
+        float effectiveDelay = delay.get() + (pingOffset.get() ? Latency.halfTicks() : 0);
+        delayTicks += ticksToMillis(effectiveDelay);
         durationTicks += ticksToMillis(duration.get());
     }
 

@@ -50,7 +50,7 @@ public final class ModuleTags {
                 CustomModel.class, ESP.class, FullBright.class, HUDHider.class, ImGui.class,
                 Interface.class, KillEffect.class, LegacyRenderer.class, NoRender.class,
                 Pointers.class, ServerRotations.class, TargetHud.class, ThunderDetector.class, Trails.class,
-                ViewModel.class, Zoom.class,
+                ViewModel.class, Vibes.class, Zoom.class,
                 AntiCheatDetector.class, CaveFinder.class, NoBlockEffects.class, NoteBot.class,
                 QuickMacro.class, Spammer.class,
                 PluginsDetector.class,

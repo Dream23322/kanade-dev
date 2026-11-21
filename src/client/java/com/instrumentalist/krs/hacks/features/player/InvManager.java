@@ -6,6 +6,7 @@ import com.instrumentalist.krs.hacks.Module;
 import com.instrumentalist.krs.hacks.ModuleCategory;
 import com.instrumentalist.krs.hacks.ModuleManager;
 import com.instrumentalist.krs.hacks.features.combat.AutoPot;
+import com.instrumentalist.krs.hacks.features.combat.KillAura;
 import com.instrumentalist.krs.hacks.features.exploit.disabler.features.HypixelDisabler;
 import com.instrumentalist.krs.utils.math.RandomUtil;
 import com.instrumentalist.krs.utils.math.ToolUtil;
@@ -17,6 +18,7 @@ import net.minecraft.client.gui.screens.inventory.ContainerScreen;
 import net.minecraft.client.gui.screens.inventory.FurnaceScreen;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
+import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.effect.MobEffectCategory;
@@ -39,8 +41,11 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class InvManager extends Module {
 
@@ -71,6 +76,10 @@ public class InvManager extends Module {
     @Setting
     private final BooleanValue cleaner = new BooleanValue("Cleaner", true)
             .describe("Drops junk items automatically.");
+
+    @Setting
+    private final BooleanValue strict = new BooleanValue("Strict", false, cleaner::get)
+            .describe("Cleaner keeps only gaps, blocks, armour, swords, pickaxes, axes and potions.");
 
     @Setting
     private final BooleanValue onlyInInventory = new BooleanValue("Only in Inventory", false)
@@ -104,34 +113,47 @@ public class InvManager extends Module {
     private final IntValue cleanerPause = new IntValue("Cleaner Pause", 40, 0, 600, "ticks")
             .describe("How long to stop dropping items after a reverted move.");
 
+    @Setting
+    private final ListValue combatStyle = new ListValue("Combat Style", new String[]{"Auto", "Modern", "1.8.9"}, "Auto")
+            .describe("Auto detects a 1.8 server, where damage per hit matters instead of attack speed.");
+
+    @Setting
+    private final ListValue weaponScoring = new ListValue("Weapon Scoring", new String[]{"DPS", "Tier"}, "DPS")
+            .describe("DPS compares damage per second, Tier compares material and then enchantments.");
+
+    @Setting
+    private final ListValue armorScoring = new ListValue("Armor Scoring", new String[]{"EPF", "Simple"}, "EPF")
+            .describe("EPF weighs armour points with protection, Simple weighs raw armour points.");
+
+    @Setting
+    private final ListValue preferWeapon = new ListValue("Prefer Weapon", new String[]{"Auto", "Sword", "Axe", "Mace"}, "Auto")
+            .describe("Weapon type that is kept in the first hotbar slot.");
+
     private int tickCounter = 0;
     private int startCounter = 0;
     private final ItemStack[] cleanerTargets = new ItemStack[9];
+    private final ItemStack[] armorTargets = new ItemStack[4];
+    private static final EquipmentSlot[] ARMOR_SLOTS = {
+            EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET
+    };
     private final EnumMap<EquipmentSlot, ArmorCandidate> armorCandidates = new EnumMap<>(EquipmentSlot.class);
     private final boolean[] excessSlots = new boolean[36];
     private final Map<MoveKey, MoveState> moveStates = new HashMap<>();
     private PendingMove pendingMove;
     private int cleanerPausedUntilTick;
+    private final Map<ItemStack, Double> scoreCache = new IdentityHashMap<>();
+    private int scoreCacheTick = Integer.MIN_VALUE;
 
     private static final int MAX_THROWABLE_STACKS = 2;
     private static final int MAX_BLOCK_STACKS = 3;
     private static final int MAX_HARMFUL_POTIONS = 3;
     private static final int GOLDEN_APPLE_SLOT = 4;
+    private static final Pattern SERVER_VERSION = Pattern.compile("(\\d+)\\.(\\d+)");
     private static final int ACTION_GAP_TICKS = 2;
     private static final int MOVE_STATE_LIMIT = 128;
     private static int lastClickTick = Integer.MIN_VALUE / 2;
 
     private static boolean cleaning = false;
-
-    private final Map<Item, Double> swordAttackDamageFallback = Map.of(
-            Items.NETHERITE_SWORD, 8.0,
-            Items.DIAMOND_SWORD, 7.0,
-            Items.IRON_SWORD, 6.0,
-            Items.COPPER_SWORD, 5.0,
-            Items.STONE_SWORD, 5.0,
-            Items.GOLDEN_SWORD, 4.0,
-            Items.WOODEN_SWORD, 4.0
-    );
 
     @Override
     public String description() {
@@ -192,6 +214,8 @@ public class InvManager extends Module {
             return;
         }
 
+        ToolUtil.INSTANCE.setLegacyCombat(resolveLegacyCombat());
+
         if (startCounter < startDelay.get()) {
             cleaning = false;
             startCounter++;
@@ -220,7 +244,7 @@ public class InvManager extends Module {
             return;
         }
 
-        if (sortToolCategory(player, gameMode, inventory, ToolUtil.TOOL_SWORD)) return;
+        if (sortWeapon(player, gameMode, inventory)) return;
         if (equipArmor(player, gameMode, inventory)) return;
         if (sortGoldenApple(player, gameMode, inventory)) return;
         if (handleBlockBorrow(player, gameMode, inventory)) return;
@@ -233,9 +257,111 @@ public class InvManager extends Module {
         cleaning = false;
     }
 
+    /** 1.8 combat: no attack cooldown, so a slower weapon is not a worse weapon. */
+    private boolean resolveLegacyCombat() {
+        String style = combatStyle.get();
+        if (style.equalsIgnoreCase("1.8.9")) return true;
+        if (style.equalsIgnoreCase("Modern")) return false;
+
+        return isLegacyServerVersion() || KillAura.autoBlockMode.get().toLowerCase().startsWith("1.8");
+    }
+
+    private static boolean isLegacyServerVersion() {
+        ServerData server = mc.getCurrentServer();
+        if (server == null || server.version == null) return false;
+
+        Matcher matcher = SERVER_VERSION.matcher(server.version.getString());
+        int major = -1;
+        int minor = -1;
+        while (matcher.find()) {
+            int candidateMajor = Integer.parseInt(matcher.group(1));
+            int candidateMinor = Integer.parseInt(matcher.group(2));
+            if (candidateMajor > major || (candidateMajor == major && candidateMinor > minor)) {
+                major = candidateMajor;
+                minor = candidateMinor;
+            }
+        }
+
+        return major == 1 && minor >= 0 && minor <= 8;
+    }
+
+    private boolean sortWeapon(LocalPlayer player, MultiPlayerGameMode gameMode, Container inventory) {
+        int bestIndex = -1;
+        double bestScore = 0.0D;
+
+        for (int i = 0; i < Math.min(36, inventory.getContainerSize()); i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (!matchesPreferredWeapon(stack)) continue;
+
+            double score = weaponScore(stack);
+            if (score <= 0.0D) continue;
+
+            if (bestIndex == -1 || score > bestScore) {
+                bestIndex = i;
+                bestScore = score;
+            }
+        }
+
+        if (bestIndex == -1 || bestIndex == ToolUtil.TOOL_SWORD) return false;
+
+        ItemStack current = inventory.getItem(ToolUtil.TOOL_SWORD);
+        if (matchesPreferredWeapon(current) && weaponScore(current) >= bestScore) return false;
+
+        MoveKey key = new MoveKey("weapon", bestIndex, ToolUtil.TOOL_SWORD, inventory.getItem(bestIndex).getItem());
+        if (!isMoveAvailable(key)) return false;
+
+        cleaning = true;
+        swapItems(player, gameMode, bestIndex, ToolUtil.TOOL_SWORD, key);
+        tickCounter = nextItemDelay();
+        return true;
+    }
+
+    private boolean matchesPreferredWeapon(ItemStack stack) {
+        if (!ToolUtil.INSTANCE.isWeaponCandidate(stack)) return false;
+
+        return switch (preferWeapon.get().toLowerCase()) {
+            case "sword" -> ToolUtil.INSTANCE.getToolCategory(stack.getItem()) == ToolUtil.TOOL_SWORD;
+            case "axe" -> ToolUtil.INSTANCE.getToolCategory(stack.getItem()) == ToolUtil.TOOL_AXE;
+            case "mace" -> stack.getItem() == Items.MACE;
+            default -> true;
+        };
+    }
+
+    private double weaponScore(ItemStack stack) {
+        if (!ToolUtil.INSTANCE.isWeaponCandidate(stack)) return 0.0D;
+
+        if (!usesDpsScoring())
+            return ToolUtil.INSTANCE.getToolTier(stack.getItem()) * 100.0D + getEnchantmentScore(stack);
+
+        // Every scan in a tick asks about the same stacks again; the modifiers only change between ticks.
+        int tick = mc.player == null ? 0 : mc.player.tickCount;
+        if (tick != scoreCacheTick) {
+            scoreCache.clear();
+            scoreCacheTick = tick;
+        }
+
+        Double cached = scoreCache.get(stack);
+        if (cached != null) return cached;
+
+        double score = ToolUtil.INSTANCE.getWeaponScore(stack);
+        scoreCache.put(stack, score);
+        return score;
+    }
+
+    private boolean usesDpsScoring() {
+        return !weaponScoring.get().equalsIgnoreCase("tier");
+    }
+
+    private boolean usesEnchantmentProtection() {
+        return !armorScoring.get().equalsIgnoreCase("simple");
+    }
+
     private boolean sortToolCategory(LocalPlayer player, MultiPlayerGameMode gameMode, Container inventory, int category) {
         ItemStack targetStack = null;
         for (int i = 0; i < Math.min(36, inventory.getContainerSize()); i++) {
+            // The first slot belongs to sortWeapon, so a weapon that doubles as a tool stays there.
+            if (category != ToolUtil.TOOL_SWORD && i == ToolUtil.TOOL_SWORD) continue;
+
             ItemStack stack = inventory.getItem(i);
             if (ToolUtil.INSTANCE.getToolCategory(stack.getItem()) != category) continue;
             if (targetStack == null || compareItems(stack, targetStack) > 0)
@@ -247,6 +373,8 @@ public class InvManager extends Module {
 
         int inventoryIndex = -1;
         for (int i = 0; i < Math.min(36, inventory.getContainerSize()); i++) {
+            if (category != ToolUtil.TOOL_SWORD && i == ToolUtil.TOOL_SWORD) continue;
+
             ItemStack stack = inventory.getItem(i);
             if (stack.getItem() == targetStack.getItem() && compareItems(stack, targetStack) == 0) {
                 inventoryIndex = i;
@@ -274,7 +402,7 @@ public class InvManager extends Module {
                 ArmorCandidate currentBest = armorCandidates.get(armorEquipSlot);
                 if (currentBest == null) {
                     armorCandidates.put(armorEquipSlot, new ArmorCandidate(stack, i));
-                } else if (ToolUtil.INSTANCE.isBetterArmor(stack, currentBest.stack)) {
+                } else if (ToolUtil.INSTANCE.isBetterArmor(stack, currentBest.stack, usesEnchantmentProtection())) {
                     currentBest.stack = stack;
                     currentBest.inventoryIndex = i;
                 }
@@ -288,12 +416,12 @@ public class InvManager extends Module {
             int inventoryIndex = candidate.inventoryIndex;
             ItemStack currentArmor = player.getItemBySlot(slot);
 
-            if (!currentArmor.isEmpty() && !ToolUtil.INSTANCE.isBetterArmor(bestArmor, currentArmor))
+            if (!currentArmor.isEmpty() && !ToolUtil.INSTANCE.isBetterArmor(bestArmor, currentArmor, usesEnchantmentProtection()))
                 continue;
 
             if (!currentArmor.isEmpty()) {
-                // Do not throw gear away while the inventory is desynced.
-                if (isCleanerPaused()) continue;
+                // Do not throw gear away while the inventory is desynced, and never touch a bound piece.
+                if (isCleanerPaused() || ToolUtil.INSTANCE.hasBindingCurse(currentArmor)) continue;
 
                 int armorSlot = ToolUtil.INSTANCE.getItemSlotId(currentArmor);
                 MoveKey dropKey = new MoveKey("armor:" + slot.getName(), armorSlot, -1, currentArmor.getItem());
@@ -376,38 +504,107 @@ public class InvManager extends Module {
         if (isCleanerPaused()) return false;
 
         Arrays.fill(cleanerTargets, null);
+        Arrays.fill(armorTargets, null);
         markExcessSlots(inventory);
 
+        // Only one stack per tool category and one armour piece per slot is worth keeping.
         for (int i = 0; i <= 35; i++) {
             ItemStack stack = inventory.getItem(i);
+            if (stack.isEmpty()) continue;
+
             int slot = ToolUtil.INSTANCE.getToolCategory(stack.getItem());
             if (slot >= 0) {
                 ItemStack targetStack = cleanerTargets[slot];
                 if (targetStack == null || compareItems(stack, targetStack) > 0)
                     cleanerTargets[slot] = stack;
             }
-        }
 
-        for (int i = 0; i <= 35; i++) {
-            ItemStack stack = inventory.getItem(i);
-            boolean excess = excessSlots[i];
-            if (!stack.isEmpty() && (excess
-                    || (!(stack.getItem() instanceof BlockItem) || stack.getItem() == Items.CHEST)
-                    && !(stack.getItem() instanceof SpawnEggItem)
-                    && !(stack.getItem() instanceof PotionItem)
-                    && !(stack.getItem() instanceof SplashPotionItem)
-                    && !(stack.getItem() instanceof LingeringPotionItem)
-                    && !isAllowedCleanerItem(stack.getItem())
-                    && !containsCleanerTarget(stack))) {
-                cleaning = true;
-                int slot = i < 9 ? i + 36 : i;
-                dropItem(player, gameMode, slot, excess || stack.getCount() > 1);
-                tickCounter = nextItemDelay();
-                return true;
+            int armorSlot = armorSlotIndex(stack);
+            if (armorSlot >= 0) {
+                ItemStack bestArmor = armorTargets[armorSlot];
+                if (bestArmor == null || ToolUtil.INSTANCE.isBetterArmor(stack, bestArmor, usesEnchantmentProtection()))
+                    armorTargets[armorSlot] = stack;
             }
         }
 
+        for (int i = 0; i <= 35; i++) {
+            // Never drop the weapon that was just selected for the first slot.
+            if (i == ToolUtil.TOOL_SWORD && ToolUtil.INSTANCE.isWeaponCandidate(inventory.getItem(i)))
+                continue;
+
+            ItemStack stack = inventory.getItem(i);
+            if (stack.isEmpty()) continue;
+
+            boolean excess = excessSlots[i];
+            boolean junk = strict.get() ? !isStrictKeep(stack) : !isLenientKeep(stack);
+            if (!excess && !junk) continue;
+
+            cleaning = true;
+            int slot = i < 9 ? i + 36 : i;
+            dropItem(player, gameMode, slot, excess || stack.getCount() > 1);
+            tickCounter = nextItemDelay();
+            return true;
+        }
+
         return false;
+    }
+
+    private boolean isLenientKeep(ItemStack stack) {
+        if (stack.getItem() instanceof BlockItem && stack.getItem() != Items.CHEST) return true;
+        if (stack.getItem() instanceof SpawnEggItem) return true;
+        if (stack.getItem() instanceof PotionItem) return true;
+        if (stack.getItem() instanceof SplashPotionItem) return true;
+        if (stack.getItem() instanceof LingeringPotionItem) return true;
+        if (isUsefulArmor(stack)) return true;
+
+        return isAllowedCleanerItem(stack.getItem()) || containsCleanerTarget(stack);
+    }
+
+    /**
+     * Armour only survives the cleaner when it is the one piece that would actually be worn for its
+     * slot and it still beats what is equipped. Duplicates and worse pieces are dropped.
+     */
+    private boolean isUsefulArmor(ItemStack stack) {
+        int slot = armorSlotIndex(stack);
+        if (slot < 0) return false;
+        if (stack != armorTargets[slot]) return false;
+
+        var player = mc.player;
+        if (player == null) return true;
+
+        ItemStack equipped = player.getItemBySlot(ARMOR_SLOTS[slot]);
+        return equipped.isEmpty()
+                || ToolUtil.INSTANCE.isBetterArmor(stack, equipped, usesEnchantmentProtection());
+    }
+
+    /** 0 = helmet, 1 = chestplate, 2 = leggings, 3 = boots. */
+    private static int armorSlotIndex(ItemStack stack) {
+        if (!ToolUtil.INSTANCE.isArmor(stack)) return -1;
+
+        return switch (ToolUtil.INSTANCE.getItemSlotId(stack)) {
+            case 5 -> 0;
+            case 6 -> 1;
+            case 7 -> 2;
+            case 8 -> 3;
+            default -> -1;
+        };
+    }
+
+    /** Strict mode keeps exactly the fight essentials and nothing else, still only the best of each. */
+    private boolean isStrictKeep(ItemStack stack) {
+        Item item = stack.getItem();
+        if (item == Items.GOLDEN_APPLE || item == Items.ENCHANTED_GOLDEN_APPLE) return true;
+        if (item instanceof BlockItem) return true;
+        if (item == Items.ELYTRA) return true;
+        if (isUsefulArmor(stack)) return true;
+        if (item instanceof PotionItem || item instanceof SplashPotionItem || item instanceof LingeringPotionItem)
+            return true;
+
+        int category = ToolUtil.INSTANCE.getToolCategory(item);
+        if (category != ToolUtil.TOOL_SWORD && category != ToolUtil.TOOL_PICKAXE && category != ToolUtil.TOOL_AXE)
+            return false;
+
+        return containsCleanerTarget(stack);
     }
 
     private void verifyPendingMove(LocalPlayer player) {
@@ -725,10 +922,19 @@ public class InvManager extends Module {
 
         int category = ToolUtil.INSTANCE.getToolCategory(item1);
         if (category >= 0 && category == ToolUtil.INSTANCE.getToolCategory(item2)) {
-            if (category == ToolUtil.TOOL_SWORD) {
-                int attackDamageComparison = Double.compare(getSwordAttackDamage(stack1), getSwordAttackDamage(stack2));
-                if (attackDamageComparison != 0)
-                    return attackDamageComparison;
+            if (category == ToolUtil.TOOL_SWORD
+                    || ToolUtil.INSTANCE.isWeaponCandidate(stack1) && ToolUtil.INSTANCE.isWeaponCandidate(stack2)) {
+                if (usesDpsScoring()) {
+                    int weaponComparison = Double.compare(weaponScore(stack1), weaponScore(stack2));
+                    if (weaponComparison != 0)
+                        return weaponComparison;
+                } else {
+                    int attackDamageComparison = Double.compare(
+                            ToolUtil.INSTANCE.getAttackDamage(stack1),
+                            ToolUtil.INSTANCE.getAttackDamage(stack2));
+                    if (attackDamageComparison != 0)
+                        return attackDamageComparison;
+                }
             }
 
             rank1 = ToolUtil.INSTANCE.getToolTier(item1);
@@ -756,8 +962,9 @@ public class InvManager extends Module {
     }
 
     private boolean containsCleanerTarget(ItemStack stack) {
+        // Identity, not equality: only the exact best stack of a category survives.
         for (ItemStack target : cleanerTargets) {
-            if (stack.equals(target))
+            if (stack == target)
                 return true;
         }
         return false;
@@ -826,45 +1033,6 @@ public class InvManager extends Module {
                 || item == Items.BLUE_EGG
                 || item == Items.BROWN_EGG
                 || item == Items.BUCKET;
-    }
-
-    private double getSwordAttackDamage(ItemStack stack) {
-        double baseAttackDamage = mc.player != null ? mc.player.getAttributeBaseValue(Attributes.ATTACK_DAMAGE) : 1.0;
-        double[] attackDamage = {baseAttackDamage};
-        boolean[] hasAttackDamageModifier = {false};
-
-        stack.forEachModifier(EquipmentSlot.MAINHAND, (attribute, modifier) -> {
-            if (attribute.is(Attributes.ATTACK_DAMAGE)) {
-                hasAttackDamageModifier[0] = true;
-                double amount = modifier.amount();
-
-                double addition = switch (modifier.operation()) {
-                    case ADD_VALUE -> amount;
-                    case ADD_MULTIPLIED_BASE -> amount * baseAttackDamage;
-                    case ADD_MULTIPLIED_TOTAL -> amount * attackDamage[0];
-                };
-                attackDamage[0] += addition;
-            }
-        });
-
-        if (!hasAttackDamageModifier[0])
-            attackDamage[0] = swordAttackDamageFallback.getOrDefault(stack.getItem(), 0.0);
-
-        return attackDamage[0] + getSharpnessDamageBonus(stack.getEnchantments());
-    }
-
-    private double getSharpnessDamageBonus(ItemEnchantments itemEnchantments) {
-        int level = getEnchantmentLevel(itemEnchantments, Enchantments.SHARPNESS);
-        if (level <= 0) return 0.0;
-
-        return 1.0 + 0.5 * (level - 1);
-    }
-
-    private int getEnchantmentLevel(ItemEnchantments itemEnchantments, ResourceKey<Enchantment> enchantment) {
-        for (var entry : itemEnchantments.entrySet()) {
-            if (entry.getKey().is(enchantment)) return entry.getIntValue();
-        }
-        return 0;
     }
 
     private int nextItemDelay() {
